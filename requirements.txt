@@ -4,3 +4,4 @@ numpy
 tensorflow-cpu
 scikit-learn
 altair
+kaggle
