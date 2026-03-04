@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-import json
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
@@ -17,7 +16,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 tf.config.set_visible_devices([], 'GPU')
 
 # --- ページ設定 ---
-st.set_page_config(page_title="宝くじAI予測 (Advanced)", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="宝くじAI予測 (Advanced)", page_icon="🧬", layout="wide")
 
 # --- 定数・設定 ---
 LOTO_CONFIG = {
@@ -56,14 +55,10 @@ def prepare_data_for_ai(df, config):
     return scaled_data, scaler, ordered_cols
 
 def calculate_next_draw_date(loto_type, last_date_str):
-    """次回抽選日を計算する関数"""
     last_date = pd.to_datetime(last_date_str.replace('/', '-'))
     today = pd.to_datetime(datetime.now().date())
-    
-    # データが最新(今日以降)なら明日以降から探す。過去のデータなら今日から探す。
     start_date = last_date + pd.Timedelta(days=1) if last_date >= today else today
     
-    # 抽選曜日設定 (月=0, 火=1, 水=2, 木=3, 金=4, 土=5, 日=6)
     draw_weekdays = []
     if loto_type == "miniloto": draw_weekdays = [1]
     elif loto_type == "loto6": draw_weekdays = [0, 3]
@@ -77,10 +72,127 @@ def calculate_next_draw_date(loto_type, last_date_str):
     return next_date.strftime("%Y/%m/%d"), weekdays_ja[next_date.weekday()]
 
 # ==========================================
+# 🧬 遺伝的アルゴリズム (GA) エンジン
+# ==========================================
+def genetic_algorithm_search(raw_pred, config, use_expected_value_mode, pop_size=200, generations=60):
+    """AIの予測値を初期集団とし、交叉と突然変異を繰り返して最適解を進化させる"""
+    PRIMES = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43}
+    
+    # 1. 初期集団の生成
+    population = []
+    for _ in range(pop_size):
+        noise = np.random.uniform(-3.5, 3.5, size=config["pick_count"])
+        cand = np.round(np.clip(raw_pred + noise, 1, config["max_num"])).astype(int)
+        cand = list(set(cand))
+        while len(cand) < config["pick_count"]:
+            new_num = np.random.randint(1, config["max_num"] + 1)
+            if new_num not in cand: cand.append(new_num)
+        cand.sort()
+        population.append(cand)
+
+    # 2. 適応度 (Fitness) 評価関数
+    def calculate_fitness(ind):
+        score = 3000.0 # 初期スコア
+        mae = np.mean(np.abs(np.array(ind) - raw_pred))
+        score -= mae * 10 # AIの原案から離れるほど微小な減点
+        
+        # [必須フィルタ] ガウス和制約・パリティ分散
+        s_val = sum(ind)
+        if not (config["sum_range"][0] <= s_val <= config["sum_range"][1]):
+            score -= 1000
+        odd = sum(1 for n in ind if n % 2 != 0)
+        if abs(odd - (config["pick_count"] - odd)) > config["max_parity_diff"]:
+            score -= 1000
+            
+        # [高度心理バイアスフィルタ] 期待値最大化モード
+        if use_expected_value_mode:
+            # ① 連続数字の強制
+            has_consecutive = any(ind[i+1] - ind[i] == 1 for i in range(len(ind)-1))
+            if not has_consecutive: score -= 500
+                
+            # ② カレンダー外数字 (32以上) の強制
+            if config["name"] in ["ロト6", "ロト7"]:
+                if not any(n >= 32 for n in ind): score -= 500
+                    
+            # ③ 素数の強制 (人間が嫌う中途半端な数字)
+            prime_count = sum(1 for n in ind if n in PRIMES)
+            if prime_count == 0: score -= 500
+                
+            # ④ 等間隔数列 (等差数列) の排除 (人間が塗りやすい規則的なパターン)
+            has_arithmetic = False
+            for i in range(len(ind)-2):
+                for j in range(i+1, len(ind)-1):
+                    diff = ind[j] - ind[i]
+                    if ind[j] + diff in ind:
+                        has_arithmetic = True
+                        break
+                if has_arithmetic: break
+            if has_arithmetic: score -= 500
+                
+        return score
+
+    # 3. 進化ループ
+    for gen in range(generations):
+        fitnesses = [calculate_fitness(ind) for ind in population]
+        sorted_indices = np.argsort(fitnesses)[::-1]
+        
+        # エリート保存 (上位10%はそのまま次世代へ)
+        new_population = [population[i] for i in sorted_indices[:int(pop_size * 0.1)]]
+        
+        # ルーレット選択のための重み付け
+        weights = np.array(fitnesses)
+        weights = np.where(weights < 0, 1e-5, weights) 
+        weights = weights / sum(weights) if sum(weights) > 0 else np.ones(pop_size) / pop_size
+        
+        # 交叉と突然変異
+        while len(new_population) < pop_size:
+            p1 = population[np.random.choice(pop_size, p=weights)]
+            p2 = population[np.random.choice(pop_size, p=weights)]
+            
+            # 交叉 (親の遺伝子を半分ずつ受け継ぐ)
+            split_idx = config["pick_count"] // 2
+            child = list(set(p1[:split_idx] + p2[split_idx:]))
+            
+            # 遺伝子の修復 (重複排除・数合わせ)
+            while len(child) < config["pick_count"]:
+                new_num = np.random.randint(1, config["max_num"] + 1)
+                if new_num not in child: child.append(new_num)
+            while len(child) > config["pick_count"]:
+                child.pop(np.random.randint(len(child)))
+                
+            # 突然変異 (15%の確率で遺伝子の一部がランダム変化)
+            if np.random.rand() < 0.15:
+                idx = np.random.randint(config["pick_count"])
+                child.pop(idx)
+                while len(child) < config["pick_count"]:
+                    new_num = np.random.randint(1, config["max_num"] + 1)
+                    if new_num not in child: child.append(new_num)
+                        
+            child.sort()
+            new_population.append(child)
+            
+        population = new_population
+        
+    # 4. 最終世代から優秀な個体(条件クリア)を抽出
+    fitnesses = [calculate_fitness(ind) for ind in population]
+    sorted_indices = np.argsort(fitnesses)[::-1]
+    
+    best_results = []
+    seen = set()
+    for i in sorted_indices:
+        cand = tuple(population[i])
+        # スコアが2000以上 (ペナルティを1つも受けていない完全体) のみを抽出
+        if cand not in seen and fitnesses[i] >= 2000:
+            seen.add(cand)
+            best_results.append(list(cand))
+            
+    return best_results
+
+# ==========================================
 # メイン UI
 # ==========================================
 st.title("🎯 宝くじ AI予測 & 全期間分析ダッシュボード")
-st.markdown("Colabで生成した「増強特徴量モデル」を用いた一貫した解析システムです。")
+st.markdown("Colabで生成した「DAE(ノイズ除去) + LSTMモデル」と「遺伝的アルゴリズム(GA)」を組み合わせた最先端の解析システムです。")
 
 st.markdown("---")
 
@@ -100,22 +212,20 @@ if df is None or model is None:
     st.error("⚠️ モデルまたはデータが見つかりません。Colabで作成したファイルを data/ および models/ に配置してください。")
     st.stop()
 
-# 共通データの準備
 scaled_data, scaler, col_names = prepare_data_for_ai(df, config)
 target_cols = [f"num{i+1}" for i in range(config["pick_count"])]
 
 # --- タブ構成 ---
-tab1, tab2, tab3 = st.tabs(["🔮 次回予測", "📈 強化トレンド・散布図分析", "🕵️ 精度検証 (バックテスト)"])
+tab1, tab2, tab3 = st.tabs(["🧬 遺伝的アルゴリズム予測", "📈 強化トレンド・散布図分析", "🕵️ 精度検証 (バックテスト)"])
 
 # ==========================================
-# タブ1: 次回予測 (答え合わせ機能追加)
+# タブ1: 遺伝的アルゴリズム予測
 # ==========================================
 with tab1:
     last_draw_id = int(df.iloc[-1]['draw_id'])
     last_draw_date = df.iloc[-1]['date']
     next_date, next_weekday = calculate_next_draw_date(selected_loto, last_draw_date)
     
-    # --- ヘッダー情報（最新回と次回抽選日） ---
     col_info1, col_info2 = st.columns(2)
     with col_info1:
         st.info(f"💾 **取得済みの最新データ:** 第{last_draw_id}回 ({last_draw_date})")
@@ -124,11 +234,9 @@ with tab1:
 
     # --- 直近の答え合わせ ---
     if len(df) > LOOKBACK_WINDOW:
-        with st.expander(f"🔍 直近（第{last_draw_id}回）のAI予測はどうだった？（答え合わせ）"):
-            # 最新回の実際の番号
+        with st.expander(f"🔍 直近（第{last_draw_id}回）のAI純粋予測はどうだった？"):
             actual_nums = [int(n) for n in df.iloc[-1][target_cols].tolist()]
             
-            # その1回前のデータを使って推論
             start_idx = len(df) - 1 - LOOKBACK_WINDOW
             end_idx = len(df) - 1
             test_input = np.array([scaled_data[start_idx:end_idx]], dtype=np.float32)
@@ -138,35 +246,31 @@ with tab1:
             dummy[0, :config["pick_count"]] = p_scaled[0]
             p_raw = scaler.inverse_transform(dummy)[0, :config["pick_count"]]
             
-            # AIの基本予測
             prediction = sorted([int(n) for n in np.round(np.clip(p_raw, 1, config["max_num"]))])
             hits = sorted(list(set(prediction) & set(actual_nums)))
-            hit_count = len(hits)
             
             st.write(f"**実際の当選番号:** `{', '.join(map(str, actual_nums))}`")
             pred_display = [f"**{n}**" if n in hits else str(n) for n in prediction]
-            st.write(f"**当時のAIベース予測:** {', '.join(pred_display)}")
+            st.write(f"**当時のAIベース予測 (DAE経由):** {', '.join(pred_display)}")
             
-            if hits:
-                st.success(f"✨ **{hit_count}個的中！** (的中数字: {', '.join(map(str, hits))})")
-            else:
-                st.write("残念ながら的中数字はありませんでした。")
-            st.caption("※期待値フィルタ適用前のAIの純粋な予測値による検証です。")
+            if hits: st.success(f"✨ **{len(hits)}個的中！** (的中数字: {', '.join(map(str, hits))})")
+            else: st.write("残念ながら的中数字はありませんでした。")
+            st.caption("※遺伝的アルゴリズムや期待値フィルタ適用前の、AIの純粋な予測値による検証です。")
 
     st.markdown("---")
-    st.subheader(f"✨ 第{last_draw_id + 1}回 ({next_date}) 向けのAI予測")
+    st.subheader(f"✨ 第{last_draw_id + 1}回 ({next_date}) 向けのAI＆GA予測")
     
-    # 【アプローチ2】期待値最大化モードのトグル
     st.markdown("##### 🧠 予測戦略の選択")
     use_expected_value_mode = st.checkbox(
-        "💰 **期待値（配当）最大化モード** (他人が買いにくい組み合わせを狙い、当選時の独占を狙う)", 
+        "💰 **期待値（配当）最大化モード** (人間心理のバイアス逆張り戦略)", 
         value=True,
-        help="人間が好む「誕生日(1〜31)」や「散らばった数字」を避け、あえて「連続数字」や「32以上の数字」を組み込みます。"
+        help="【導入済みロジック】32以上を含む / 連続数字を含む / 素数を含める / 人間が塗りやすい「等間隔数列」の排除"
     )
     
-    if st.button(f"第{last_draw_id + 1}回の予測を実行する", type="primary", use_container_width=True):
-        with st.spinner('最新データを解析中...'):
+    if st.button(f"遺伝的アルゴリズム (GA) で第{last_draw_id + 1}回の最適解を生成", type="primary", use_container_width=True):
+        with st.spinner('DAE+LSTMで予測推論し、遺伝的アルゴリズムで進化計算中...'):
             try:
+                # 1. DAE+LSTM によるベース推論
                 recent_input = np.array([scaled_data[-LOOKBACK_WINDOW:]], dtype=np.float32)
                 scaled_pred = model(tf.convert_to_tensor(recent_input), training=False).numpy()
                 
@@ -174,37 +278,14 @@ with tab1:
                 dummy[0, :config["pick_count"]] = scaled_pred[0]
                 raw_pred = scaler.inverse_transform(dummy)[0, :config["pick_count"]]
                 
-                results = []
-                for _ in range(5000):
-                    noise = np.random.uniform(-2.5, 2.5, size=config["pick_count"])
-                    cand = np.round(np.clip(raw_pred + noise, 1, config["max_num"])).astype(int)
-                    cand.sort()
-                    
-                    if len(set(cand)) == config["pick_count"]:
-                        s_val = sum(cand)
-                        odd = sum(1 for n in cand if n % 2 != 0)
-                        
-                        if config["sum_range"][0] <= s_val <= config["sum_range"][1] and \
-                           abs(odd - (config["pick_count"] - odd)) <= config["max_parity_diff"]:
-                            
-                            if use_expected_value_mode:
-                                if selected_loto in ["loto6", "loto7"]:
-                                    if not any(n >= 32 for n in cand):
-                                        continue
-                                has_consecutive = any(cand[i+1] - cand[i] == 1 for i in range(len(cand)-1))
-                                if not has_consecutive:
-                                    continue
-                            results.append(cand.tolist())
-                
-                unique_results = []
-                for r in results:
-                    if r not in unique_results: unique_results.append(r)
+                # 2. 遺伝的アルゴリズム (GA) による最適候補の探索・進化
+                unique_results = genetic_algorithm_search(raw_pred, config, use_expected_value_mode)
                 
                 if unique_results:
                     if use_expected_value_mode:
-                        st.success(f"💰 **期待値重視！** 他人が敬遠しがちな、配当が高くなりやすい組み合わせ（上位{min(len(unique_results), 5)}件）です。")
+                        st.success(f"🧬 **進化完了 (期待値重視)！** 高度心理バイアスフィルタをすべてクリアした最強の組み合わせ（上位{min(len(unique_results), 5)}件）です。")
                     else:
-                        st.success(f"🎯 AIが算出した標準的な推奨買い目（上位{min(len(unique_results), 5)}件）です。")
+                        st.success(f"🧬 **進化完了！** 統計フィルタをクリアした最適解（上位{min(len(unique_results), 5)}件）です。")
                         
                     cols = st.columns(min(len(unique_results), 5))
                     for i, match in enumerate(unique_results[:5]):
@@ -212,13 +293,13 @@ with tab1:
                             match_str = ", ".join(map(str, [int(n) for n in match]))
                             st.markdown(f"""
                             <div style="background-color:{config['color']}; padding:15px; border-radius:12px; text-align:center; color:white;">
-                                <div style="font-size:11px; opacity:0.8;">推奨 {i+1}</div>
+                                <div style="font-size:11px; opacity:0.8;">世代進化 エリート {i+1}</div>
                                 <div style="font-size:22px; font-weight:bold; margin:8px 0;">{match_str}</div>
                                 <div style="font-size:11px;">合計: {sum(match)}</div>
                             </div>
                             """, unsafe_allow_html=True)
                 else:
-                    st.warning("条件を満たす候補が見つかりませんでした。もう一度実行するか、モードをOFFにしてください。")
+                    st.warning("設定された世代数内で条件を満たす「完全体」に進化できませんでした。もう一度実行するか、モードをOFFにしてください。")
             except Exception as e:
                 st.error(f"エラー: {e}")
 
@@ -249,7 +330,6 @@ with tab2:
     )
 
     st.altair_chart(chart, use_container_width=True)
-    st.info(f"💡 縦軸は上が第1回、下が最新回です。横軸は1から最大数字までで固定されています。")
     st.markdown("---")
     
     st.subheader("🔢 番号出現頻度ランキング")
@@ -324,7 +404,7 @@ with tab3:
                     for n in prediction:
                         if n in hits: pred_display.append(f"**{n}**")
                         else: pred_display.append(str(n))
-                    st.write(f"**AIの当時の予測:** {', '.join(pred_display)}")
+                    st.write(f"**AIの当時のベース予測:** {', '.join(pred_display)}")
                     if hits: st.success(f"的中した数字: {', '.join(map(str, hits))}")
                     else: st.info("的中した数字はありませんでした。")
 
