@@ -2,13 +2,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
+import json
+import pickle
 import shutil
 import tensorflow as tf
 from tensorflow.keras.models import load_model
-from sklearn.preprocessing import MinMaxScaler
-from datetime import datetime
 import warnings
 import altair as alt
+
+from config import LOTO_CONFIG, LOOKBACK_WINDOW, generate_valid_sample
 
 # --- Mac環境安定化設定 ---
 warnings.filterwarnings('ignore')
@@ -16,90 +18,77 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1' 
 tf.config.set_visible_devices([], 'GPU')
 
-# --- ページ設定 ---
-st.set_page_config(page_title="宝くじAI予測 (Advanced)", page_icon="🧬", layout="wide")
-
-# --- 定数・設定 ---
-LOTO_CONFIG = {
-    "miniloto": {"name": "ミニロト", "max_num": 31, "pick_count": 5, "sum_range": [60, 100], "max_parity_diff": 3, "color": "#ec4899"},
-    "loto6": {"name": "ロト6", "max_num": 43, "pick_count": 6, "sum_range": [115, 150], "max_parity_diff": 2, "color": "#3b82f6"},
-    "loto7": {"name": "ロト7", "max_num": 37, "pick_count": 7, "sum_range": [110, 155], "max_parity_diff": 3, "color": "#f59e0b"}
-}
-LOOKBACK_WINDOW = 10
+st.set_page_config(page_title="宝くじAI 確率予測ダッシュボード", page_icon="🎲", layout="wide")
 
 # ==========================================
-# ☁️ Kaggle同期 (Sync) 機能 (環境変数対応版)
+# ☁️ Kaggle同期 (Sync) 機能
 # ==========================================
 def sync_from_kaggle(slug):
     try:
-        # 環境変数に設定されていない場合、StreamlitのSecretsからの読み込みを試みる（フォールバック）
         if not os.getenv('KAGGLE_USERNAME') or not os.getenv('KAGGLE_KEY'):
             if 'KAGGLE_USERNAME' in st.secrets and 'KAGGLE_KEY' in st.secrets:
                 os.environ['KAGGLE_USERNAME'] = st.secrets['KAGGLE_USERNAME']
                 os.environ['KAGGLE_KEY'] = st.secrets['KAGGLE_KEY']
             else:
-                return False, "❌ Kaggleの認証情報（KAGGLE_USERNAME, KAGGLE_KEY）が環境変数またはSecretsに見つかりません。"
+                return False, "❌ Kaggleの認証情報が見つかりません。"
 
         from kaggle.api.kaggle_api_extended import KaggleApi
         api = KaggleApi()
-        # authenticate()は環境変数 KAGGLE_USERNAME と KAGGLE_KEY を自動で読み込みます
         api.authenticate()
         
         temp_dir = "kaggle_temp"
         os.makedirs(temp_dir, exist_ok=True)
-        
-        # Notebook(Kernel)のOutputをダウンロード
         api.kernels_output(slug, path=temp_dir)
         
-        # ダウンロードしたファイルを正しいディレクトリに移動
         os.makedirs("data", exist_ok=True)
         os.makedirs("models", exist_ok=True)
         
+        # 確率モデルに必要なファイルをすべて抽出・移動
         for root, dirs, files in os.walk(temp_dir):
             for file in files:
                 source_path = os.path.join(root, file)
-                if file.endswith(".csv"):
+                if file.endswith(".csv") or (file.endswith(".json") and "eval" in file):
                     shutil.move(source_path, os.path.join("data", file))
-                elif file.endswith(".keras"):
+                elif file.endswith(".keras") or file.endswith(".pkl") or file.endswith(".json"):
                     shutil.move(source_path, os.path.join("models", file))
                     
-        # 一時フォルダの削除
         shutil.rmtree(temp_dir)
-        return True, "✅ Kaggleから最新のデータとAIモデルの同期が完了しました！"
+        return True, "✅ Kaggleからの最新確率モデル・データの同期が完了しました！"
     except Exception as e:
         return False, f"❌ 同期エラー: {str(e)}"
 
 # ==========================================
-# データ読み込み・処理関数
+# データ・モデル読み込み関数
 # ==========================================
-@st.cache_data(ttl=3600) # 1時間キャッシュ
-def load_data(loto_type):
-    data_file = f"data/{loto_type}_processed.csv"
-    if os.path.exists(data_file):
-        df = pd.read_csv(data_file)
-        return df
-    return None
-
-def get_model(loto_type):
-    model_path = f"models/{loto_type}_lstm_best.keras"
-    if os.path.exists(model_path):
-        return load_model(model_path, compile=False)
-    return None
-
-def prepare_data_for_ai(df, config):
-    target_cols = [f"num{i+1}" for i in range(config["pick_count"])]
-    features_df = df.drop(['draw_id', 'date'], axis=1, errors='ignore')
+@st.cache_data(ttl=3600)
+def load_assets(ltype):
+    data_path = f"data/{ltype}_processed.csv"
+    model_path = f"models/{ltype}_prob.keras"
+    scaler_path = f"models/{ltype}_scaler.pkl"
+    cols_path = f"models/{ltype}_feature_cols.json"
     
-    other_cols = [c for c in features_df.columns if c not in target_cols]
-    ordered_cols = target_cols + other_cols
-    features_df = features_df[ordered_cols]
-    
-    scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(features_df)
-    return scaled_data, scaler, ordered_cols
+    if not all(os.path.exists(p) for p in [data_path, model_path, scaler_path, cols_path]):
+        return None, None, None, None
+        
+    df = pd.read_csv(data_path)
+    model = load_model(model_path, compile=False)
+    with open(scaler_path, "rb") as f:
+        scaler = pickle.load(f)
+    with open(cols_path, "r") as f:
+        feature_cols = json.load(f)
+        
+    return df, model, scaler, feature_cols
+
+def load_eval_report(ltype):
+    p = f"data/eval_report_{ltype}.json"
+    if os.path.exists(p):
+        with open(p, "r") as f:
+            return json.load(f)
+    return None
 
 def calculate_next_draw_date(loto_type, last_date_str):
     last_date = pd.to_datetime(last_date_str.replace('/', '-'))
+    from datetime import datetime
     today = pd.to_datetime(datetime.now().date())
     start_date = last_date + pd.Timedelta(days=1) if last_date >= today else today
     
@@ -116,164 +105,47 @@ def calculate_next_draw_date(loto_type, last_date_str):
     return next_date.strftime("%Y/%m/%d"), weekdays_ja[next_date.weekday()]
 
 # ==========================================
-# 🧬 遺伝的アルゴリズム (GA) エンジン
-# ==========================================
-def genetic_algorithm_search(raw_pred, config, use_expected_value_mode, pop_size=200, generations=60):
-    PRIMES = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43}
-    
-    population = []
-    for _ in range(pop_size):
-        noise = np.random.uniform(-3.5, 3.5, size=config["pick_count"])
-        cand = np.round(np.clip(raw_pred + noise, 1, config["max_num"])).astype(int)
-        cand = list(set(cand))
-        while len(cand) < config["pick_count"]:
-            new_num = np.random.randint(1, config["max_num"] + 1)
-            if new_num not in cand: cand.append(new_num)
-        cand.sort()
-        population.append(cand)
-
-    def calculate_fitness(ind):
-        score = 3000.0
-        mae = np.mean(np.abs(np.array(ind) - raw_pred))
-        score -= mae * 10
-        
-        s_val = sum(ind)
-        if not (config["sum_range"][0] <= s_val <= config["sum_range"][1]):
-            score -= 1000
-        odd = sum(1 for n in ind if n % 2 != 0)
-        if abs(odd - (config["pick_count"] - odd)) > config["max_parity_diff"]:
-            score -= 1000
-            
-        if use_expected_value_mode:
-            has_consecutive = any(ind[i+1] - ind[i] == 1 for i in range(len(ind)-1))
-            if not has_consecutive: score -= 500
-            if config["name"] in ["ロト6", "ロト7"]:
-                if not any(n >= 32 for n in ind): score -= 500
-            prime_count = sum(1 for n in ind if n in PRIMES)
-            if prime_count == 0: score -= 500
-                
-            has_arithmetic = False
-            for i in range(len(ind)-2):
-                for j in range(i+1, len(ind)-1):
-                    diff = ind[j] - ind[i]
-                    if ind[j] + diff in ind:
-                        has_arithmetic = True
-                        break
-                if has_arithmetic: break
-            if has_arithmetic: score -= 500
-                
-        return score
-
-    for gen in range(generations):
-        fitnesses = [calculate_fitness(ind) for ind in population]
-        sorted_indices = np.argsort(fitnesses)[::-1]
-        
-        new_population = [population[i] for i in sorted_indices[:int(pop_size * 0.1)]]
-        weights = np.array(fitnesses)
-        weights = np.where(weights < 0, 1e-5, weights) 
-        weights = weights / sum(weights) if sum(weights) > 0 else np.ones(pop_size) / pop_size
-        
-        while len(new_population) < pop_size:
-            p1 = population[np.random.choice(pop_size, p=weights)]
-            p2 = population[np.random.choice(pop_size, p=weights)]
-            
-            split_idx = config["pick_count"] // 2
-            child = list(set(p1[:split_idx] + p2[split_idx:]))
-            
-            while len(child) < config["pick_count"]:
-                new_num = np.random.randint(1, config["max_num"] + 1)
-                if new_num not in child: child.append(new_num)
-            while len(child) > config["pick_count"]:
-                child.pop(np.random.randint(len(child)))
-                
-            if np.random.rand() < 0.15:
-                idx = np.random.randint(config["pick_count"])
-                child.pop(idx)
-                while len(child) < config["pick_count"]:
-                    new_num = np.random.randint(1, config["max_num"] + 1)
-                    if new_num not in child: child.append(new_num)
-                        
-            child.sort()
-            new_population.append(child)
-            
-        population = new_population
-        
-    fitnesses = [calculate_fitness(ind) for ind in population]
-    sorted_indices = np.argsort(fitnesses)[::-1]
-    
-    best_results = []
-    seen = set()
-    for i in sorted_indices:
-        cand = tuple(population[i])
-        if cand not in seen and fitnesses[i] >= 2000:
-            seen.add(cand)
-            best_results.append(list(cand))
-            
-    return best_results
-
-# ==========================================
-# サイドバー (Kaggle 同期設定)
+# サイドバー
 # ==========================================
 with st.sidebar:
     st.header("☁️ Kaggle 同期設定")
-    st.markdown("Kaggleの自動学習結果をワンクリックで取り込みます。")
+    default_slug = os.getenv('KAGGLE_SLUG', "")
+    if not default_slug and 'KAGGLE_SLUG' in st.secrets:
+        default_slug = st.secrets['KAGGLE_SLUG']
+        
+    k_slug = st.text_input("Notebook Slug", value=default_slug)
     
-    with st.expander("⚙️ 設定", expanded=True):
-        # 環境変数(またはSecrets)に KAGGLE_SLUG があればデフォルト値として表示する
-        default_slug = os.getenv('KAGGLE_SLUG', "")
-        if not default_slug and 'KAGGLE_SLUG' in st.secrets:
-            default_slug = st.secrets['KAGGLE_SLUG']
-            
-        k_slug = st.text_input("Notebook Slug", value=default_slug, placeholder="username/kaggle-loto-trainer", help="KaggleのURLのユーザー名/ノートブック名の部分です")
-    
-    if st.button("🔄 最新AIモデルを同期する", use_container_width=True):
-        if not k_slug:
-            st.warning("⚠️ Notebook Slug を入力してください。")
-        else:
-            with st.spinner("Kaggleと通信中... (数十秒かかります)"):
+    if st.button("🔄 最新AIモデルを同期", use_container_width=True):
+        if k_slug:
+            with st.spinner("同期中..."):
                 success, msg = sync_from_kaggle(k_slug)
                 if success:
                     st.success(msg)
-                    st.cache_data.clear() # 古いデータのキャッシュを削除
-                    st.rerun() # 画面をリロード
+                    st.cache_data.clear()
+                    st.rerun()
                 else:
                     st.error(msg)
-                    
-    st.markdown("---")
-    st.caption("※ 認証API Keyはシステムの環境変数に安全に保管されています。")
+        else:
+            st.warning("Slugを入力してください。")
 
 # ==========================================
 # メイン UI
 # ==========================================
-st.title("🎯 宝くじ AI予測 & 全期間分析ダッシュボード")
-st.markdown("Kaggle上の「DAE + LSTMモデル」と「遺伝的アルゴリズム(GA)」を組み合わせた最先端の解析システムです。")
+st.title("🎯 宝くじ AI確率予測システム (Multi-Label Classification)")
+st.markdown("LSTMから出力された**出現確率ベクトル**に基づき、重み付きサンプリングで買い目を生成します。")
 st.markdown("---")
 
-# 1. 宝くじ選択
-selected_loto = st.radio(
-    "宝くじの種類を選択してください",
-    options=["miniloto", "loto6", "loto7"],
-    format_func=lambda x: LOTO_CONFIG[x]["name"],
-    horizontal=True
-)
-
+selected_loto = st.radio("宝くじの種類", options=list(LOTO_CONFIG.keys()), format_func=lambda x: LOTO_CONFIG[x]["name"], horizontal=True)
 config = LOTO_CONFIG[selected_loto]
-df = load_data(selected_loto)
-model = get_model(selected_loto)
 
-if df is None or model is None:
-    st.error("⚠️ モデルまたはデータが見つかりません。サイドバーからKaggleの同期を行ってください。")
+df, model, scaler, feature_cols = load_assets(selected_loto)
+
+if df is None:
+    st.error("⚠️ 必要なファイルが不足しています。Kaggle同期またはローカルでの学習(train_prob_model.py)を実行してください。")
     st.stop()
 
-scaled_data, scaler, col_names = prepare_data_for_ai(df, config)
-target_cols = [f"num{i+1}" for i in range(config["pick_count"])]
+tab1, tab2 = st.tabs(["🎲 確率サンプリング予測", "📊 モデル評価レポート (Walk-Forward)"])
 
-# --- タブ構成 ---
-tab1, tab2, tab3 = st.tabs(["🧬 遺伝的アルゴリズム予測", "📈 強化トレンド・散布図分析", "🕵️ 精度検証 (バックテスト)"])
-
-# ==========================================
-# タブ1: 遺伝的アルゴリズム予測
-# ==========================================
 with tab1:
     last_draw_id = int(df.iloc[-1]['draw_id'])
     last_draw_date = df.iloc[-1]['date']
@@ -281,178 +153,86 @@ with tab1:
     
     col_info1, col_info2 = st.columns(2)
     with col_info1:
-        st.info(f"💾 **取得済みの最新データ:** 第{last_draw_id}回 ({last_draw_date})")
+        st.info(f"💾 **最新データ:** 第{last_draw_id}回 ({last_draw_date})")
     with col_info2:
-        st.success(f"🗓️ **次回抽選予定日:** {next_date} ({next_weekday})")
-
-    if len(df) > LOOKBACK_WINDOW:
-        with st.expander(f"🔍 直近（第{last_draw_id}回）のAI純粋予測はどうだった？"):
-            actual_nums = [int(n) for n in df.iloc[-1][target_cols].tolist()]
-            
-            start_idx = len(df) - 1 - LOOKBACK_WINDOW
-            end_idx = len(df) - 1
-            test_input = np.array([scaled_data[start_idx:end_idx]], dtype=np.float32)
-            p_scaled = model(tf.convert_to_tensor(test_input), training=False).numpy()
-            
-            dummy = np.zeros((1, len(col_names)))
-            dummy[0, :config["pick_count"]] = p_scaled[0]
-            p_raw = scaler.inverse_transform(dummy)[0, :config["pick_count"]]
-            
-            prediction = sorted([int(n) for n in np.round(np.clip(p_raw, 1, config["max_num"]))])
-            hits = sorted(list(set(prediction) & set(actual_nums)))
-            
-            st.write(f"**実際の当選番号:** `{', '.join(map(str, actual_nums))}`")
-            pred_display = [f"**{n}**" if n in hits else str(n) for n in prediction]
-            st.write(f"**当時のAIベース予測 (DAE経由):** {', '.join(pred_display)}")
-            
-            if hits: st.success(f"✨ **{len(hits)}個的中！** (的中数字: {', '.join(map(str, hits))})")
-            else: st.write("残念ながら的中数字はありませんでした。")
+        st.success(f"🗓️ **次回抽選:** {next_date} ({next_weekday})")
 
     st.markdown("---")
-    st.subheader(f"✨ 第{last_draw_id + 1}回 ({next_date}) 向けのAI＆GA予測")
+    st.subheader(f"✨ 次回（第{last_draw_id + 1}回）向けの確率予測と買い目生成")
     
-    st.markdown("##### 🧠 予測戦略の選択")
-    use_expected_value_mode = st.checkbox(
-        "💰 **期待値（配当）最大化モード** (人間心理のバイアス逆張り戦略)", 
-        value=True,
-        help="【導入済みロジック】32以上を含む / 連続数字を含む / 素数を含める / 人間が塗りやすい「等間隔数列」の排除"
-    )
+    # --- 推論処理 ---
+    # 学習時と完全に同じ特徴量の順序を保証する
+    features_df = df[feature_cols]
+    scaled_data = scaler.transform(features_df)
+    recent_input = np.array([scaled_data[-LOOKBACK_WINDOW:]], dtype=np.float32)
+    probs = model(tf.convert_to_tensor(recent_input), training=False).numpy()[0]
     
-    if st.button(f"遺伝的アルゴリズム (GA) で第{last_draw_id + 1}回の最適解を生成", type="primary", use_container_width=True):
-        with st.spinner('DAE+LSTMで予測推論し、遺伝的アルゴリズムで進化計算中...'):
-            try:
-                recent_input = np.array([scaled_data[-LOOKBACK_WINDOW:]], dtype=np.float32)
-                scaled_pred = model(tf.convert_to_tensor(recent_input), training=False).numpy()
-                
-                dummy = np.zeros((1, len(col_names)))
-                dummy[0, :config["pick_count"]] = scaled_pred[0]
-                raw_pred = scaler.inverse_transform(dummy)[0, :config["pick_count"]]
-                
-                unique_results = genetic_algorithm_search(raw_pred, config, use_expected_value_mode)
-                
-                if unique_results:
-                    if use_expected_value_mode:
-                        st.success(f"🧬 **進化完了 (期待値重視)！** 高度心理バイアスフィルタをすべてクリアした最強の組み合わせ（上位{min(len(unique_results), 5)}件）です。")
-                    else:
-                        st.success(f"🧬 **進化完了！** 統計フィルタをクリアした最適解（上位{min(len(unique_results), 5)}件）です。")
-                        
-                    cols = st.columns(min(len(unique_results), 5))
-                    for i, match in enumerate(unique_results[:5]):
-                        with cols[i]:
-                            match_str = ", ".join(map(str, [int(n) for n in match]))
-                            st.markdown(f"""
-                            <div style="background-color:{config['color']}; padding:15px; border-radius:12px; text-align:center; color:white;">
-                                <div style="font-size:11px; opacity:0.8;">世代進化 エリート {i+1}</div>
-                                <div style="font-size:22px; font-weight:bold; margin:8px 0;">{match_str}</div>
-                                <div style="font-size:11px;">合計: {sum(match)}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                else:
-                    st.warning("設定された世代数内で条件を満たす「完全体」に進化できませんでした。もう一度実行するか、モードをOFFにしてください。")
-            except Exception as e:
-                st.error(f"エラー: {e}")
-
-# ==========================================
-# タブ2: 強化トレンド分析・全期間散布図
-# ==========================================
-with tab2:
-    st.header(f"📊 {config['name']} 統計解析")
-    
-    st.subheader("📍 全期間の番号出現散布図")
-    st.markdown(f"**横軸: 1〜{config['max_num']}** 、 **縦軸: 上が第1回 〜 下が第{df['draw_id'].max()}回（最新）** で固定しています。")
-    
-    scatter_df = df[['draw_id'] + target_cols].melt(id_vars=['draw_id'], value_name='当選番号')
-    
-    chart = alt.Chart(scatter_df).mark_circle(size=40, opacity=0.5).encode(
-        x=alt.X('当選番号:Q', 
-                title='当選番号', 
-                scale=alt.Scale(domain=[1, config["max_num"]]),
-                axis=alt.Axis(tickCount=config["max_num"] // 2)),
-        y=alt.Y('draw_id:Q', 
-                title='抽選回 (第n回)', 
-                scale=alt.Scale(domain=[1, df['draw_id'].max()], reverse=True)),
-        color=alt.value(config["color"]),
-        tooltip=['draw_id', '当選番号']
-    ).properties(
-        height=1200, 
-        width='container'
-    )
-
+    # 確率バーチャート
+    prob_df = pd.DataFrame({"Number": np.arange(1, config["max_num"] + 1), "Probability": probs})
+    chart = alt.Chart(prob_df).mark_bar(color=config["color"]).encode(
+        x=alt.X('Number:O', title='数字'),
+        y=alt.Y('Probability:Q', title='出現確率', axis=alt.Axis(format='%')),
+        tooltip=['Number', alt.Tooltip('Probability:Q', format='.2%')]
+    ).properties(height=250)
     st.altair_chart(chart, use_container_width=True)
-    st.markdown("---")
     
-    st.subheader("🔢 番号出現頻度ランキング")
-    all_numbers_series = df[target_cols].stack()
-    distribution = all_numbers_series.value_counts().sort_index()
+    st.markdown("##### ⚙️ 買い目生成オプション")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        sampling_mode = st.selectbox("抽出方式", ["weighted (確率重み付き抽出)", "top-k (最上位固定)"])
+    with col2:
+        use_psych = st.checkbox("期待値最大化フィルタ(人間心理の逆張り)", value=True, help="素数、連番、32以上などを含め、等差数列を除外")
+    with col3:
+        use_stat = st.checkbox("基本統計フィルタ", value=True, help="合計値のガウス和制約とパリティ分散制約")
+        
+    num_tickets = st.slider("生成口数", 1, 10, 5)
     
-    col_info1, col_info2 = st.columns(2)
-    with col_info1:
-        most_common = distribution.idxmax()
-        st.success(f"🏆 最も多く出ている数字: **{most_common}** ({distribution.max()}回)")
-    with col_info2:
-        least_common = distribution.idxmin()
-        st.warning(f"🧊 最も出ていない数字: **{least_common}** ({distribution.min()}回)")
+    if st.button("買い目を生成する", type="primary", use_container_width=True):
+        st.success("🎯 生成結果")
+        mode = "top-k" if "top-k" in sampling_mode else "weighted"
+        
+        cols = st.columns(min(num_tickets, 5))
+        for i in range(num_tickets):
+            cand = generate_valid_sample(probs, config, use_psych, use_stat, sampling_mode=mode)
+            cand_str = ", ".join(f"{n:02d}" for n in cand)
+            with cols[i % 5]:
+                st.markdown(f"""
+                <div style="background-color:{config['color']}; padding:10px; border-radius:8px; text-align:center; color:white; margin-bottom:10px;">
+                    <div style="font-size:10px; opacity:0.8;">口数 {i+1}</div>
+                    <div style="font-size:18px; font-weight:bold;">{cand_str}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    
-    st.subheader("📈 直近60回の特徴量トレンド")
-    recent_df = df.tail(60).copy()
-    recent_df['draw_id'] = recent_df['draw_id'].astype(str)
-    
-    def safe_chart(cols, title, caption, chart_type='line'):
-        available = [c for c in cols if c in recent_df.columns]
-        if available:
-            st.write(f"**{title}**")
-            st.caption(caption)
-            if chart_type == 'line': st.line_chart(recent_df.set_index('draw_id')[available])
-            elif chart_type == 'bar': st.bar_chart(recent_df.set_index('draw_id')[available])
-            elif chart_type == 'area': st.area_chart(recent_df.set_index('draw_id')[available])
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        safe_chart(['sum_val', 'sum_ma5'], "1. 合計値とトレンド", "合計値の推移と直近5回平均")
-        safe_chart(['consecutive_pairs'], "2. 連続数字ペア数", "隣接する数字の出現傾向", 'bar')
-    with col_b:
-        safe_chart(['last_digit_sum'], "3. 下一桁合計", "一の位の偏り分析")
-        safe_chart(['max_min_diff'], "4. 数値レンジ", "数字の広がり（最大-最小）", 'area')
-
-# ==========================================
-# タブ3: 精度検証
-# ==========================================
-with tab3:
-    st.subheader("🕵️ バックテスト・シミュレーター")
-    st.markdown("過去の実際の当選番号に対して、その一回前の時点のAIモデルで「予測していたらどうなっていたか」を検証します。")
-    
-    num_test = st.slider("検証する過去の回数を選択", 1, 20, 5)
-    
-    if st.button("過去検証を開始", use_container_width=True):
-        with st.spinner('過去の予測をシミュレーション中...'):
-            for i in range(num_test, 0, -1):
-                target_idx = len(df) - i
-                if target_idx < LOOKBACK_WINDOW: continue
-                
-                actual_draw_id = int(df.iloc[target_idx]['draw_id'])
-                actual_date = df.iloc[target_idx]['date']
-                actual_nums = [int(n) for n in df.iloc[target_idx][target_cols].tolist()]
-                
-                start_idx = target_idx - LOOKBACK_WINDOW
-                test_input = np.array([scaled_data[start_idx:target_idx]], dtype=np.float32)
-                p_scaled = model(tf.convert_to_tensor(test_input), training=False).numpy()
-                
-                dummy = np.zeros((1, len(col_names)))
-                dummy[0, :config["pick_count"]] = p_scaled[0]
-                p_raw = scaler.inverse_transform(dummy)[0, :config["pick_count"]]
-                
-                prediction = sorted([int(n) for n in np.round(np.clip(p_raw, 1, config["max_num"]))])
-                hits = sorted(list(set(prediction) & set(actual_nums)))
-                hit_count = len(hits)
-                
-                with st.expander(f"第 {actual_draw_id} 回 ({actual_date}) - {hit_count}個 的中"):
-                    st.write(f"**実際の当選番号:** `{', '.join(map(str, actual_nums))}`")
-                    pred_display = []
-                    for n in prediction:
-                        if n in hits: pred_display.append(f"**{n}**")
-                        else: pred_display.append(str(n))
-                    st.write(f"**AIの当時のベース予測:** {', '.join(pred_display)}")
-                    if hits: st.success(f"的中した数字: {', '.join(map(str, hits))}")
-                    else: st.info("的中した数字はありませんでした。")
+with tab2:
+    report = load_eval_report(selected_loto)
+    if report:
+        st.subheader("🕵️ Walk-Forward 評価レポート")
+        st.caption("時系列の分割テストによる、過去データのリークを含まない厳密な評価指標です。")
+        
+        metrics_df = []
+        # Model
+        m = report["Model (LSTM)"]
+        metrics_df.append({"モデル": "★ AI Model (LSTM)", "LogLoss (BCE)↓": m["logloss"], "Brier Score↓": m["brier"], "Top-K 正解重なり↑": m["mean_overlap_top_k"]})
+        # Baselines
+        for b_name, b_metrics in report["Baselines"].items():
+            metrics_df.append({"モデル": b_name, "LogLoss (BCE)↓": b_metrics["logloss"], "Brier Score↓": b_metrics["brier"], "Top-K 正解重なり↑": b_metrics["mean_overlap_top_k"]})
+            
+        st.dataframe(pd.DataFrame(metrics_df).set_index("モデル"), use_container_width=True)
+        
+        # Calibration
+        st.write("##### 信頼度曲線 (Calibration)")
+        calib_df = pd.DataFrame(m["calibration"])
+        if not calib_df.empty:
+            calib_chart = alt.Chart(calib_df).mark_bar(opacity=0.7).encode(
+                x='bin_range:O',
+                y=alt.Y('pred_prob:Q', title='予測確率 vs 実測確率'),
+                color=alt.value('blue')
+            )
+            calib_line = alt.Chart(calib_df).mark_line(color='red', point=True).encode(
+                x='bin_range:O',
+                y='true_prob:Q'
+            )
+            st.altair_chart(calib_chart + calib_line, use_container_width=True)
+            st.caption("青棒: モデルの予測確率平均 / 赤線: 実際の当選確率。一致しているほど精度が高い。")
+    else:
+        st.info("評価レポートが見つかりません。")
