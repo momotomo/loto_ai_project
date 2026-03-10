@@ -35,6 +35,29 @@ DEFAULT_SEED = 42
 EPSILON = 1e-6
 STATIC_BASELINE_NAMES = ["uniform", "frequency", "gap"]
 ONLINE_BASELINE_NAMES = ["frequency_online", "gap_online"]
+PRESET_CONFIGS = {
+    "default": {
+        "walk_forward_folds": DEFAULT_MAX_WALK_FORWARD_FOLDS,
+        "eval_epochs": DEFAULT_EVAL_EPOCHS,
+        "final_epochs": DEFAULT_FINAL_EPOCHS,
+        "batch_size": DEFAULT_BATCH_SIZE,
+        "patience": DEFAULT_PATIENCE,
+    },
+    "fast": {
+        "walk_forward_folds": 3,
+        "eval_epochs": 4,
+        "final_epochs": 6,
+        "batch_size": 64,
+        "patience": 2,
+    },
+    "smoke": {
+        "walk_forward_folds": 1,
+        "eval_epochs": 1,
+        "final_epochs": 1,
+        "batch_size": 32,
+        "patience": 1,
+    },
+}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -115,6 +138,31 @@ def calculate_metrics(preds, targets, k):
         "mean_overlap_top_k": float(np.mean(overlaps)) if overlaps else 0.0,
         "overlap_dist": overlap_dist,
         "calibration": calculate_calibration(preds, targets),
+    }
+
+
+def metrics_to_summary_entry(metrics):
+    return {
+        "fold_count": 1,
+        "test_samples": None,
+        "metric_summary": {
+            "logloss": {"mean": metrics["logloss"], "variance": 0.0},
+            "brier": {"mean": metrics["brier"], "variance": 0.0},
+            "mean_overlap_top_k": {"mean": metrics["mean_overlap_top_k"], "variance": 0.0},
+        },
+        "overlap_dist_total": metrics["overlap_dist"],
+        "calibration": metrics["calibration"],
+    }
+
+
+def summary_entry_to_metrics(summary_entry):
+    metric_summary = summary_entry["metric_summary"]
+    return {
+        "logloss": metric_summary["logloss"]["mean"],
+        "brier": metric_summary["brier"]["mean"],
+        "mean_overlap_top_k": metric_summary["mean_overlap_top_k"]["mean"],
+        "overlap_dist": summary_entry["overlap_dist_total"],
+        "calibration": summary_entry["calibration"],
     }
 
 
@@ -460,6 +508,54 @@ def train_final_model(raw_features, targets, max_num, epochs, batch_size, patien
     return scaler, model
 
 
+def load_existing_feature_cols(loto_type):
+    for path in [
+        os.path.join(MODEL_DIR, f"{loto_type}_feature_cols.json"),
+        os.path.join(DATA_DIR, f"{loto_type}_feature_cols.json"),
+    ]:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+    return None
+
+
+def save_feature_cols(loto_type, feature_cols):
+    save_json(os.path.join(DATA_DIR, f"{loto_type}_feature_cols.json"), feature_cols)
+    save_json(os.path.join(MODEL_DIR, f"{loto_type}_feature_cols.json"), feature_cols)
+
+
+def persist_final_artifacts(loto_type, raw_features, targets, feature_cols, max_num, epochs, batch_size, patience, skip_final_train):
+    model_path = os.path.join(MODEL_DIR, f"{loto_type}_prob.keras")
+    scaler_path = os.path.join(MODEL_DIR, f"{loto_type}_scaler.pkl")
+    existing_feature_cols = load_existing_feature_cols(loto_type)
+    feature_cols_match = existing_feature_cols == feature_cols if existing_feature_cols is not None else False
+    artifacts_exist = os.path.exists(model_path) and os.path.exists(scaler_path)
+
+    save_feature_cols(loto_type, feature_cols)
+
+    if skip_final_train and artifacts_exist and feature_cols_match:
+        return "reused_existing_artifacts"
+
+    effective_epochs = 0 if skip_final_train else epochs
+    final_scaler, final_model = train_final_model(
+        raw_features=raw_features,
+        targets=targets,
+        max_num=max_num,
+        epochs=effective_epochs,
+        batch_size=batch_size,
+        patience=patience,
+    )
+    final_model.save(model_path)
+    with open(scaler_path, "wb") as handle:
+        pickle.dump(final_scaler, handle)
+    del final_model
+    tf.keras.backend.clear_session()
+
+    if skip_final_train:
+        return "initialized_without_training"
+    return "trained_on_full_data"
+
+
 def get_git_commit():
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
@@ -467,23 +563,66 @@ def get_git_commit():
         return None
 
 
-def build_manifest(loto_type, df, walk_forward_report, eval_report_path):
-    model_summary = walk_forward_report["aggregate"]["model"]["metric_summary"]
-    static_summary = walk_forward_report["aggregate"]["static_baselines"]
-    best_static_name = min(
-        static_summary,
-        key=lambda name: static_summary[name]["metric_summary"]["logloss"]["mean"],
+def build_compat_report_sections(legacy_holdout, walk_forward):
+    if legacy_holdout is not None:
+        return legacy_holdout["model"], legacy_holdout["static_baselines"], legacy_holdout["online_baselines"]
+
+    aggregate = walk_forward["aggregate"]
+    return (
+        summary_entry_to_metrics(aggregate["model"]),
+        {name: summary_entry_to_metrics(entry) for name, entry in aggregate["static_baselines"].items()},
+        {name: summary_entry_to_metrics(entry) for name, entry in aggregate["online_baselines"].items()},
     )
 
-    best_static = static_summary[best_static_name]["metric_summary"]
+
+def select_primary_evaluation(legacy_holdout, walk_forward_report):
+    if walk_forward_report is not None:
+        return {
+            "source": "walk_forward",
+            "model_summary": walk_forward_report["aggregate"]["model"]["metric_summary"],
+            "static_summary": {
+                name: entry["metric_summary"] for name, entry in walk_forward_report["aggregate"]["static_baselines"].items()
+            },
+            "fold_count": len(walk_forward_report["folds"]),
+            "test_window": walk_forward_report["settings"]["test_window"],
+        }
+
+    if legacy_holdout is not None:
+        return {
+            "source": "legacy_holdout",
+            "model_summary": metrics_to_summary_entry(legacy_holdout["model"])["metric_summary"],
+            "static_summary": {
+                name: metrics_to_summary_entry(metrics)["metric_summary"]
+                for name, metrics in legacy_holdout["static_baselines"].items()
+            },
+            "fold_count": 1,
+            "test_window": legacy_holdout["test_samples"],
+        }
+
+    raise ValueError("manifest 生成には少なくとも1つの評価結果が必要です。")
+
+
+def build_manifest(loto_type, df, legacy_holdout, walk_forward_report, eval_report_path, final_artifact_status):
+    primary_evaluation = select_primary_evaluation(legacy_holdout, walk_forward_report)
+    model_summary = primary_evaluation["model_summary"]
+    static_summary = primary_evaluation["static_summary"]
+    best_static_name = min(
+        static_summary,
+        key=lambda name: static_summary[name]["logloss"]["mean"],
+    )
+
+    best_static = static_summary[best_static_name]
+    primary_model = {
+        "logloss_mean": model_summary["logloss"]["mean"],
+        "brier_mean": model_summary["brier"]["mean"],
+        "mean_overlap_top_k_mean": model_summary["mean_overlap_top_k"]["mean"],
+    }
     metrics_summary = {
-        "fold_count": len(walk_forward_report["folds"]),
-        "test_window": walk_forward_report["settings"]["test_window"],
-        "walk_forward_model": {
-            "logloss_mean": model_summary["logloss"]["mean"],
-            "brier_mean": model_summary["brier"]["mean"],
-            "mean_overlap_top_k_mean": model_summary["mean_overlap_top_k"]["mean"],
-        },
+        "evaluation_source": primary_evaluation["source"],
+        "fold_count": primary_evaluation["fold_count"],
+        "test_window": primary_evaluation["test_window"],
+        "primary_model": primary_model,
+        "walk_forward_model": primary_model if primary_evaluation["source"] == "walk_forward" else None,
         "best_static_baseline": {
             "name": best_static_name,
             "logloss_mean": best_static["logloss"]["mean"],
@@ -495,6 +634,7 @@ def build_manifest(loto_type, df, walk_forward_report, eval_report_path):
                 "mean_overlap_top_k": model_summary["mean_overlap_top_k"]["mean"] - best_static["mean_overlap_top_k"]["mean"],
             },
         },
+        "final_artifact_status": final_artifact_status,
     }
 
     return {
@@ -518,6 +658,14 @@ def save_json(path, payload):
         json.dump(payload, handle, indent=2, ensure_ascii=False)
 
 
+def apply_preset(args):
+    preset_values = PRESET_CONFIGS[args.preset]
+    for field, value in preset_values.items():
+        if getattr(args, field) is None:
+            setattr(args, field, value)
+    return args
+
+
 def train_for_type(loto_type, args):
     config = LOTO_CONFIG[loto_type]
     df_path = os.path.join(DATA_DIR, f"{loto_type}_processed.csv")
@@ -535,35 +683,47 @@ def train_for_type(loto_type, args):
         raise ValueError(f"[{loto_type}] データ量が不足しています。samples={len(targets)}")
 
     print(f"\n--- {loto_type.upper()} 確率モデル学習 ＆ 信用度評価 ---")
-    print("  [1/4] legacy holdout を計算中...")
-    holdout_split = max(int(len(targets) * 0.8), args.walk_forward_test_window)
-    holdout_split = min(holdout_split, len(targets) - args.walk_forward_test_window)
-    legacy_holdout, _, _, _, _, _ = evaluate_split(
-        df=df,
-        raw_features=raw_features,
-        targets=targets,
-        pick_count=config["pick_count"],
-        max_num=config["max_num"],
-        train_end=holdout_split,
-        test_end=len(targets),
-        epochs=args.eval_epochs,
-        batch_size=args.batch_size,
-        patience=args.patience,
-    )
+    legacy_holdout = None
+    if args.skip_legacy_holdout:
+        print("  [1/4] legacy holdout をスキップします。")
+    else:
+        print("  [1/4] legacy holdout を計算中...")
+        holdout_split = max(int(len(targets) * 0.8), args.walk_forward_test_window)
+        holdout_split = min(holdout_split, len(targets) - args.walk_forward_test_window)
+        legacy_holdout, _, _, _, _, _ = evaluate_split(
+            df=df,
+            raw_features=raw_features,
+            targets=targets,
+            pick_count=config["pick_count"],
+            max_num=config["max_num"],
+            train_end=holdout_split,
+            test_end=len(targets),
+            epochs=args.eval_epochs,
+            batch_size=args.batch_size,
+            patience=args.patience,
+        )
 
-    print("  [2/4] walk-forward を計算中...")
-    walk_forward = evaluate_walk_forward(
-        df=df,
-        raw_features=raw_features,
-        targets=targets,
-        pick_count=config["pick_count"],
-        max_num=config["max_num"],
-        initial_train_fraction=args.initial_train_fraction,
-        test_window=args.walk_forward_test_window,
-        max_folds=args.walk_forward_folds,
-        epochs=args.eval_epochs,
-        batch_size=args.batch_size,
-        patience=args.patience,
+    walk_forward = None
+    if args.skip_walk_forward:
+        print("  [2/4] walk-forward をスキップします。")
+    else:
+        print("  [2/4] walk-forward を計算中...")
+        walk_forward = evaluate_walk_forward(
+            df=df,
+            raw_features=raw_features,
+            targets=targets,
+            pick_count=config["pick_count"],
+            max_num=config["max_num"],
+            initial_train_fraction=args.initial_train_fraction,
+            test_window=args.walk_forward_test_window,
+            max_folds=args.walk_forward_folds,
+            epochs=args.eval_epochs,
+            batch_size=args.batch_size,
+            patience=args.patience,
+        )
+
+    compat_model_metrics, compat_static_baselines, compat_online_baselines = build_compat_report_sections(
+        legacy_holdout, walk_forward
     )
 
     report = {
@@ -571,40 +731,59 @@ def train_for_type(loto_type, args):
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "loto_type": loto_type,
         "lookback_window": LOOKBACK_WINDOW,
-        "Model (LSTM)": legacy_holdout["model"],
-        "Baselines": legacy_holdout["static_baselines"],
-        "Online Baselines": legacy_holdout["online_baselines"],
+        "run_options": {
+            "preset": args.preset,
+            "skip_final_train": args.skip_final_train,
+            "skip_legacy_holdout": args.skip_legacy_holdout,
+            "skip_walk_forward": args.skip_walk_forward,
+            "walk_forward_folds": args.walk_forward_folds,
+            "eval_epochs": args.eval_epochs,
+            "final_epochs": args.final_epochs,
+            "batch_size": args.batch_size,
+            "patience": args.patience,
+        },
+        "Model (LSTM)": compat_model_metrics,
+        "Baselines": compat_static_baselines,
+        "Online Baselines": compat_online_baselines,
         "legacy_holdout": legacy_holdout,
         "walk_forward": walk_forward,
     }
     eval_report_path = os.path.join(DATA_DIR, f"eval_report_{loto_type}.json")
     save_json(eval_report_path, report)
 
-    print("  [3/4] 本番用モデルと scaler を保存中...")
-    final_scaler, final_model = train_final_model(
+    if args.skip_final_train:
+        print("  [3/4] 本番用モデル学習をスキップし、既存成果物を再利用または雛形を保存します...")
+    else:
+        print("  [3/4] 本番用モデルと scaler を保存中...")
+    final_artifact_status = persist_final_artifacts(
+        loto_type=loto_type,
         raw_features=raw_features,
         targets=targets,
+        feature_cols=feature_cols,
         max_num=config["max_num"],
         epochs=args.final_epochs,
         batch_size=args.batch_size,
         patience=args.patience,
+        skip_final_train=args.skip_final_train,
     )
-    final_model.save(os.path.join(MODEL_DIR, f"{loto_type}_prob.keras"))
-    with open(os.path.join(MODEL_DIR, f"{loto_type}_scaler.pkl"), "wb") as handle:
-        pickle.dump(final_scaler, handle)
-
-    save_json(os.path.join(DATA_DIR, f"{loto_type}_feature_cols.json"), feature_cols)
-    save_json(os.path.join(MODEL_DIR, f"{loto_type}_feature_cols.json"), feature_cols)
 
     print("  [4/4] manifest を生成中...")
-    manifest = build_manifest(loto_type, df, walk_forward, eval_report_path)
+    manifest = build_manifest(
+        loto_type=loto_type,
+        df=df,
+        legacy_holdout=legacy_holdout,
+        walk_forward_report=walk_forward,
+        eval_report_path=eval_report_path,
+        final_artifact_status=final_artifact_status,
+    )
     save_json(os.path.join(DATA_DIR, f"manifest_{loto_type}.json"), manifest)
 
-    wf_model = walk_forward["aggregate"]["model"]["metric_summary"]
+    primary_metrics = compat_model_metrics
     print(
         "✅ 完了 "
-        f"(WF LogLoss mean: {wf_model['logloss']['mean']:.4f}, "
-        f"WF Top-k mean: {wf_model['mean_overlap_top_k']['mean']:.2f})"
+        f"(LogLoss: {primary_metrics['logloss']:.4f}, "
+        f"Top-k: {primary_metrics['mean_overlap_top_k']:.2f}, "
+        f"final_artifact_status: {final_artifact_status})"
     )
     return True
 
@@ -612,19 +791,25 @@ def train_for_type(loto_type, args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Leak-free training with legacy holdout and walk-forward evaluation.")
     parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
+    parser.add_argument("--preset", choices=sorted(PRESET_CONFIGS.keys()), default="default")
     parser.add_argument("--initial_train_fraction", type=float, default=DEFAULT_INITIAL_TRAIN_FRACTION)
     parser.add_argument("--walk_forward_test_window", type=int, default=DEFAULT_WALK_FORWARD_TEST_WINDOW)
-    parser.add_argument("--walk_forward_folds", type=int, default=DEFAULT_MAX_WALK_FORWARD_FOLDS)
-    parser.add_argument("--eval_epochs", type=int, default=DEFAULT_EVAL_EPOCHS)
-    parser.add_argument("--final_epochs", type=int, default=DEFAULT_FINAL_EPOCHS)
-    parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)
-    parser.add_argument("--patience", type=int, default=DEFAULT_PATIENCE)
+    parser.add_argument("--walk_forward_folds", type=int, default=None)
+    parser.add_argument("--eval_epochs", type=int, default=None)
+    parser.add_argument("--final_epochs", type=int, default=None)
+    parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--patience", type=int, default=None)
+    parser.add_argument("--skip_final_train", action="store_true")
+    parser.add_argument("--skip_legacy_holdout", action="store_true")
+    parser.add_argument("--skip_walk_forward", action="store_true")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     return parser.parse_args()
 
 
 def main():
-    args = parse_args()
+    args = apply_preset(parse_args())
+    if args.skip_legacy_holdout and args.skip_walk_forward:
+        raise SystemExit("legacy_holdout と walk_forward を同時に skip することはできません。")
     set_reproducible_seed(args.seed)
 
     loto_types = [args.loto_type] if args.loto_type else list(LOTO_CONFIG.keys())

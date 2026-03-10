@@ -12,13 +12,23 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 def parse_args():
     parser = argparse.ArgumentParser(description="Run data refresh, training, and a quick prediction smoke test.")
     parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
+    parser.add_argument("--train_preset", choices=["default", "fast", "smoke"], default="default", help="train_prob_model.py に渡す preset")
+    parser.add_argument("--skip_final_train", action="store_true", help="train_prob_model.py の final 学習を省略する")
     return parser.parse_args()
 
 
-def build_command(script_name, loto_type=None, supports_loto_type=True):
+def build_command(script_name, loto_type=None):
     command = [sys.executable, script_name]
-    if loto_type and supports_loto_type:
+    if loto_type:
         command.extend(["--loto_type", loto_type])
+    return command
+
+
+def build_train_command(args):
+    command = build_command("train_prob_model.py", args.loto_type)
+    command.extend(["--preset", args.train_preset])
+    if args.skip_final_train:
+        command.append("--skip_final_train")
     return command
 
 
@@ -63,13 +73,13 @@ def main():
 
     run_step(
         "\n🧠 [2/3] 確率モデル(LSTM)の評価と本学習を実行中... (数分かかります)",
-        build_command("train_prob_model.py", args.loto_type),
+        build_train_command(args),
     )
     verify_artifacts(args.loto_type)
 
     run_step(
         "\n🔮 [3/3] 最新のAIモデルで推論テストを実行中...",
-        build_command("predict.py", args.loto_type, supports_loto_type=False),
+        build_command("predict.py", args.loto_type),
     )
 
     print("\n=======================================================")
