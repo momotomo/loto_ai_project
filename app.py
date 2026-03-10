@@ -1,4 +1,5 @@
 import ast
+import errno
 import json
 import os
 import pickle
@@ -7,6 +8,7 @@ import shutil
 import tempfile
 import warnings
 from datetime import datetime
+from pathlib import Path
 
 import altair as alt
 import numpy as np
@@ -232,18 +234,24 @@ def get_local_bundle_paths(loto_type):
     return [pattern.format(loto_type=loto_type) for pattern in LOCAL_BUNDLE_DELETE_PATTERNS]
 
 
-def remove_local_artifacts_for_loto(loto_type):
+def remove_local_artifacts_for_loto(loto_type, keep_paths=None):
     removed = []
     missing = []
+    kept = []
+    normalized_keep_paths = {os.path.normpath(path) for path in (keep_paths or [])}
 
     for path in get_local_bundle_paths(loto_type):
+        normalized_path = os.path.normpath(path)
+        if normalized_path in normalized_keep_paths:
+            kept.append(path)
+            continue
         if os.path.exists(path):
             os.remove(path)
             removed.append(path)
         else:
             missing.append(path)
 
-    return {"removed": removed, "missing": missing}
+    return {"removed": removed, "missing": missing, "kept": kept}
 
 
 def format_cleanup_notice(loto_type, cleanup_result):
@@ -263,6 +271,58 @@ def validate_staged_manifest(manifest, loto_type):
         return "artifact_schema_version 不一致"
     if not manifest.get("bundle_id"):
         return "bundle_id 欠落"
+    return None
+
+
+def safe_copy_into_place(src, dest, prepare_only=False):
+    src_path = Path(src)
+    dest_path = Path(dest)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, temp_name = tempfile.mkstemp(prefix=f".sync_tmp_{dest_path.name}.", dir=str(dest_path.parent))
+    os.close(fd)
+    temp_path = Path(temp_name)
+
+    try:
+        shutil.copy2(src_path, temp_path)
+        if prepare_only:
+            return temp_path
+        os.replace(temp_path, dest_path)
+        return dest_path
+    except OSError:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+
+
+def cleanup_temp_paths(paths):
+    for path in paths:
+        try:
+            path = Path(path)
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+
+def build_local_sync_error_message(exc):
+    if isinstance(exc, OSError) and exc.errno == errno.EXDEV:
+        return (
+            "❌ Kaggle artifact の配置に失敗しました\n"
+            "- 一時ディレクトリから永続領域への配置で cross-device エラーが発生しました\n"
+            "- Streamlit Cloud では `/tmp` と app 領域が別デバイスになることがあります\n"
+            "- copy-based 配置で再試行すべき箇所です\n"
+            f"- 詳細: {str(exc)}"
+        )
+
+    if isinstance(exc, OSError):
+        return (
+            "❌ Kaggle artifact のローカル配置に失敗しました\n"
+            "- staged bundle の検証後、local data/models への反映中にエラーが発生しました\n"
+            "- 既存の local bundle は可能な限り維持したまま停止しています\n"
+            f"- 詳細: {str(exc)}"
+        )
+
     return None
 
 
@@ -425,7 +485,9 @@ def evaluate_sync_plan(plan, selected_files):
 def apply_sync_plan(plan, updated_loto_types):
     staging_dir = tempfile.mkdtemp(prefix="kaggle_sync_stage_")
     staged_files = []
+    prepared_replacements = []
     cleanup_summary = {}
+    planned_destinations = set()
 
     try:
         for item in plan:
@@ -435,13 +497,22 @@ def apply_sync_plan(plan, updated_loto_types):
                 shutil.copy2(item["source_path"], staged_path)
                 staged_files.append((staged_path, destination))
 
-        for loto_type in updated_loto_types:
-            cleanup_summary[loto_type] = remove_local_artifacts_for_loto(loto_type)
-
         for staged_path, destination in staged_files:
-            os.makedirs(os.path.dirname(destination), exist_ok=True)
-            os.replace(staged_path, destination)
+            destination_path = Path(destination)
+            temp_destination_path = safe_copy_into_place(staged_path, destination_path, prepare_only=True)
+            prepared_replacements.append((temp_destination_path, destination_path))
+            planned_destinations.add(os.path.normpath(str(destination_path)))
+
+        for temp_destination_path, destination_path in prepared_replacements:
+            os.replace(temp_destination_path, destination_path)
+
+        for loto_type in updated_loto_types:
+            cleanup_summary[loto_type] = remove_local_artifacts_for_loto(
+                loto_type,
+                keep_paths=planned_destinations,
+            )
     finally:
+        cleanup_temp_paths([temp_path for temp_path, _ in prepared_replacements])
         shutil.rmtree(staging_dir, ignore_errors=True)
 
     return cleanup_summary
@@ -489,6 +560,9 @@ def sync_from_kaggle(kernel_ref):
         }
         return True, "✅ Kaggleからの同期が完了しました。", summary
     except Exception as exc:
+        local_sync_message = build_local_sync_error_message(exc)
+        if local_sync_message:
+            return False, local_sync_message, None
         return False, build_kaggle_sync_error_message(kernel_ref, exc), None
     finally:
         shutil.rmtree(download_dir, ignore_errors=True)

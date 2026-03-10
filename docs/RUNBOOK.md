@@ -20,6 +20,7 @@
   - Notebook 側で学習を再実行し、Output が更新されたことを確認してから再同期する。
   - 翌営業日実行では対象 loto_type だけが学習対象なので、他 loto_type の `processed.csv` だけが残っていても即失敗ではない。
   - Output の path mismatch が疑わしい場合は、`/kaggle/working/data` / `models` へ export 済みか確認する。移行期間は Streamlit 側で `app/data` / `app/models` fallback も読むが、root export が正。
+  - Streamlit Cloud で `[Errno 18] Invalid cross-device link` が出る場合は、`/tmp` の staged bundle から app 領域への rename が失敗している。artifact 不足は二次被害なので、copy-based 配置が入った版へ更新して再同期する。
 
 ## Streamlit の KeyError / 整合性エラー
 - 症状: 予測タブで `df[feature_cols]` 付近が落ちる、または整合性エラーが表示される。
@@ -124,7 +125,8 @@
 - Streamlit 同期は `kaggle_run_summary.json` → `run_config.json` → `manifest_*.json` の順で今回対象を推定し、loto_type ごとに完全 bundle を判定する。
 - artifact 探索は root の `data/...` / `models/...` を優先し、旧 Output 互換のため `app/data/...` / `app/models/...` も fallback で参照する。
 - bundle 判定は `manifest_{loto_type}.json` の `artifact_schema_version` / `bundle_id` と必須成果物の存在で行う。
-- 更新対象 loto_type では、配置前に古いローカル artifact を削除してから新 bundle を一括配置する。
+- 更新対象 loto_type では、新 bundle の全ファイルを final dir 上の temp file へ copy してから置換し、最後に不要な古いローカル artifact だけを掃除する。
+- local 反映は `/tmp` staged dir から final dir へ直接 rename せず、`data/` / `models/` 側に sibling temp を copy してから `os.replace()` する。Streamlit Cloud の cross-device 制約を避けるため。
 - UI 上の表示:
   - `更新: loto6`
   - `loto6: bundle_id=... / source=root`
@@ -174,3 +176,4 @@
 - ただし翌営業日実行では非対象 loto_type の不完全 bundle が混ざるため、同期判定は global ではなく loto_type 単位に変えた。対象外はスキップ表示に留め、対象 loto_type だけ厳密に守る方針にした。
 - `artifact_schema_version` / `bundle_id` を manifest に入れ、clean sync はその bundle 単位で行うようにした。schema version 変更直後や初回移行時は `miniloto` / `loto6` / `loto7` を一度フル再学習して bundle を揃え、その後は partial update で運用する。
 - 今回の Kaggle 同期不具合は path mismatch が原因で、学習後の artifact が `/kaggle/working/app/...` にだけ残り root の `data/` / `models/` と噛み合っていなかった。運用上は root export を正とし、Streamlit 側は旧 Output 互換として `app/` 配下も fallback 参照する。
+- 今回の cross-device sync failure は `/tmp` staged dir から app 領域へ `os.replace()` したことが原因だった。現在は final dir 上の temp file へ copy してから replace する方式に変え、copy 完了前に local bundle を消さない方針にしている。

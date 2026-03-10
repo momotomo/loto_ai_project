@@ -60,5 +60,5 @@
 - モデル本体と scaler は再生成可能だが、UI 起動には必要。
 - Streamlit の予測タブは `processed.csv` / `feature_cols.json` / `scaler.pkl` / `model.keras` の世代が揃っている前提。Kaggle 同期ではこれらを一時ディレクトリにまとめて取得してから最後に入れ替える。
 - GitHub Actions の翌営業日実行では対象 loto_type だけ更新される。同期側も loto_type ごとに完全 bundle を判定し、完全な loto_type だけを部分更新する。
-- clean sync は manifest の `artifact_schema_version` / `bundle_id` を基準に行う。更新対象 loto_type では古いローカル bundle を先に削除してから新しい bundle を配置する。
+- clean sync は manifest の `artifact_schema_version` / `bundle_id` を基準に行う。更新対象 loto_type では新 bundle を temp copy で準備してから置換し、最後に不要な古いローカル artifact を掃除する。
 - Streamlit の Kaggle sync は root の `data/...` / `models/...` を優先し、旧 Output 互換のため `app/data/...` / `app/models/...` も fallback で参照する。
