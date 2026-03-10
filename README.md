@@ -20,10 +20,11 @@
 ## Streamlit 運用メモ
 - Kaggle 同期欄の入力は `Kernel Ref (owner/kernel-slug)` 形式です。例: `username/my-loto-kernel`
 - Kaggle 学習中の生成物は一度 `/kaggle/working/app/...` に作られますが、終了時に `/kaggle/working/data` と `/kaggle/working/models` へ export する前提です。同期側は root を正とし、移行期間だけ `app/` 配下も fallback で参照します。
+- Streamlit Cloud では `/tmp` と app の `data/` / `models/` が別デバイスになることがあります。Kaggle 同期の staged sync は rename ではなく copy-based 配置で反映します。
 - `processed.csv` と `feature_cols.json` / `scaler.pkl` / `model.keras` の世代がずれると、予測タブは整合性エラーで停止します。
 - その場合でも評価タブと実績照合タブは見られるようにしているので、manifest や prediction history を先に確認できます。
 - GitHub Actions の翌営業日実行では、対象 loto_type だけ学習されます。Kaggle 同期も loto_type ごとに bundle 完全性を判定し、完全なものだけ部分更新します。
-- `manifest_{loto_type}.json` には `artifact_schema_version` と `bundle_id` が入ります。同期はこの bundle 単位で検証し、更新時は古いローカル artifact を先に削除してから新しい bundle を配置します。
+- `manifest_{loto_type}.json` には `artifact_schema_version` と `bundle_id` が入ります。同期はこの bundle 単位で検証し、新 bundle を temp copy で準備してから置換し、最後に不要な古い artifact だけ掃除します。
 
 ## Docs
 - `AGENT.md`
