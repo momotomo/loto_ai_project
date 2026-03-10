@@ -1,3 +1,4 @@
+import argparse
 import os
 import json
 import pickle
@@ -15,26 +16,46 @@ tf.config.set_visible_devices([], 'GPU')
 DATA_DIR = "data"
 MODEL_DIR = "models"
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run a quick lottery prediction smoke test.")
+    parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
+    return parser.parse_args()
+
 if __name__ == "__main__":
+    args = parse_args()
+    loto_types = [args.loto_type] if args.loto_type else list(LOTO_CONFIG.keys())
+
     print("\n" + "="*60)
     print(" 🎯 宝くじ AI確率予測システム - CLI")
     print("="*60 + "\n")
 
-    for ltype, config in LOTO_CONFIG.items():
+    for ltype in loto_types:
+        config = LOTO_CONFIG[ltype]
         model_path = os.path.join(MODEL_DIR, f"{ltype}_prob.keras")
         scaler_path = os.path.join(MODEL_DIR, f"{ltype}_scaler.pkl")
-        cols_path = os.path.join(MODEL_DIR, f"{ltype}_feature_cols.json")
+        cols_paths = [
+            os.path.join(MODEL_DIR, f"{ltype}_feature_cols.json"),
+            os.path.join(DATA_DIR, f"{ltype}_feature_cols.json"),
+        ]
         data_path = os.path.join(DATA_DIR, f"{ltype}_processed.csv")
         
-        if not all(os.path.exists(p) for p in [model_path, scaler_path, cols_path, data_path]):
+        if not all(os.path.exists(p) for p in [model_path, scaler_path, data_path]):
             print(f"[{ltype.upper()}] 必要なファイルが不足しています。スキップします。")
             continue
 
         df = pd.read_csv(data_path)
         with open(scaler_path, "rb") as f:
             scaler = pickle.load(f)
-        with open(cols_path, "r") as f:
-            feature_cols = json.load(f)
+        feature_cols = None
+        for cols_path in cols_paths:
+            if os.path.exists(cols_path):
+                with open(cols_path, "r") as f:
+                    feature_cols = json.load(f)
+                break
+        if feature_cols is None:
+            print(f"[{ltype.upper()}] feature_cols.json が見つかりません。スキップします。")
+            continue
             
         # データの準備
         features_df = df[feature_cols] # 学習時と同じ列順序を保証

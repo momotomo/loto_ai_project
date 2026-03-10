@@ -1,33 +1,83 @@
+import argparse
 import os
-import sys
 import subprocess
-from datetime import datetime
+import sys
+
+from config import LOTO_CONFIG
 
 # --- Macフリーズ対策 ---
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-if __name__ == "__main__":
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run data refresh, training, and a quick prediction smoke test.")
+    parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
+    return parser.parse_args()
+
+
+def build_command(script_name, loto_type=None, supports_loto_type=True):
+    command = [sys.executable, script_name]
+    if loto_type and supports_loto_type:
+        command.extend(["--loto_type", loto_type])
+    return command
+
+
+def run_step(step_name, command):
+    print(step_name)
+    result = subprocess.run(command)
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
+
+
+def verify_artifacts(loto_type=None):
+    loto_types = [loto_type] if loto_type else list(LOTO_CONFIG.keys())
+    missing = []
+
+    for current_loto_type in loto_types:
+        eval_report_path = os.path.join("data", f"eval_report_{current_loto_type}.json")
+        manifest_path = os.path.join("data", f"manifest_{current_loto_type}.json")
+        if not os.path.exists(eval_report_path):
+            missing.append(eval_report_path)
+        if not os.path.exists(manifest_path):
+            missing.append(manifest_path)
+
+    if missing:
+        print("❌ 学習完了後の成果物が不足しています。")
+        for path in missing:
+            print(f" - {path}")
+        raise SystemExit(1)
+
+
+def main():
+    args = parse_args()
+    os.makedirs("data", exist_ok=True)
+
     print("\n=======================================================")
     print(" 🚀 宝くじAI 全自動アップデートシステム開始 (確率モデル版)")
     print("=======================================================\n")
-    
-    os.makedirs("data", exist_ok=True)
-    python_exe = sys.executable
 
-    # 1. データ収集
-    print("📡 [1/3] Webから最新の過去データをダウンロード中...")
-    subprocess.run([python_exe, "data_collector.py"])
+    run_step(
+        "📡 [1/3] Webから最新の過去データをダウンロード中...",
+        build_command("data_collector.py", args.loto_type),
+    )
 
-    # 2. 確率モデルの学習とWalk-forward評価
-    print("\n🧠 [2/3] 確率モデル(LSTM)の評価と本学習を実行中... (数分かかります)")
-    subprocess.run([python_exe, "train_prob_model.py"])
+    run_step(
+        "\n🧠 [2/3] 確率モデル(LSTM)の評価と本学習を実行中... (数分かかります)",
+        build_command("train_prob_model.py", args.loto_type),
+    )
+    verify_artifacts(args.loto_type)
 
-    # 3. 予測結果の出力確認
-    print("\n🔮 [3/3] 最新のAIモデルで推論テストを実行中...")
-    subprocess.run([python_exe, "predict.py"])
+    run_step(
+        "\n🔮 [3/3] 最新のAIモデルで推論テストを実行中...",
+        build_command("predict.py", args.loto_type, supports_loto_type=False),
+    )
 
     print("\n=======================================================")
-    print(" ✅ 全ての処理が正常に完了しました！")
-    print(" 評価結果を見たい場合は 'python backtest.py' を、")
-    print(" UIを利用する場合は 'streamlit run app.py' を実行してください。")
+    print(" ✅ 全ての処理が正常に完了しました。")
+    print(" 評価結果は data/eval_report_*.json、manifest は data/manifest_*.json を確認してください。")
+    print(" UI を使う場合は `streamlit run app.py` を実行してください。")
     print("=======================================================\n")
+
+
+if __name__ == "__main__":
+    main()
