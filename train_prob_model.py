@@ -13,7 +13,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.layers import BatchNormalization, Dense, Dropout, Input, LSTM
 from tensorflow.keras.models import Sequential
 
-from config import LOOKBACK_WINDOW, LOTO_CONFIG
+from config import ARTIFACT_SCHEMA_VERSION, LOOKBACK_WINDOW, LOTO_CONFIG
 
 # フリーズ回避
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -61,6 +61,17 @@ PRESET_CONFIGS = {
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
+
+
+def build_bundle_id(loto_type, generated_at):
+    compact_timestamp = (
+        str(generated_at)
+        .replace("-", "")
+        .replace(":", "")
+        .replace("+00:00", "Z")
+        .replace(".", "")
+    )
+    return f"{loto_type}-{compact_timestamp}"
 
 
 def set_reproducible_seed(seed):
@@ -191,7 +202,7 @@ def build_prediction_history_records(
     return records
 
 
-def build_prediction_history_artifact(loto_type, records):
+def build_prediction_history_artifact(loto_type, records, generated_at, bundle_id):
     sorted_records = sorted(
         records,
         key=lambda item: (
@@ -202,7 +213,9 @@ def build_prediction_history_artifact(loto_type, records):
     )
     return {
         "schema_version": 1,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "bundle_id": bundle_id,
+        "generated_at": generated_at,
         "loto_type": loto_type,
         "record_count": len(sorted_records),
         "records": sorted_records,
@@ -725,6 +738,8 @@ def build_manifest(
     final_artifact_status,
     prediction_history_path,
     prediction_history_rows,
+    generated_at,
+    bundle_id,
 ):
     primary_evaluation = select_primary_evaluation(legacy_holdout, walk_forward_report)
     model_summary = primary_evaluation["model_summary"]
@@ -761,7 +776,9 @@ def build_manifest(
     }
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "bundle_id": bundle_id,
+        "generated_at": generated_at,
         "loto_type": loto_type,
         "latest_draw_id": int(df.iloc[-1]["draw_id"]),
         "train_range": build_range_metadata(df, 0, len(df) - 1),
@@ -807,6 +824,9 @@ def train_for_type(loto_type, args):
 
     if len(targets) <= args.walk_forward_test_window:
         raise ValueError(f"[{loto_type}] データ量が不足しています。samples={len(targets)}")
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    bundle_id = build_bundle_id(loto_type, generated_at)
 
     print(f"\n--- {loto_type.upper()} 確率モデル学習 ＆ 信用度評価 ---")
     legacy_holdout = None
@@ -860,7 +880,9 @@ def train_for_type(loto_type, args):
 
     report = {
         "schema_version": 2,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "bundle_id": bundle_id,
+        "generated_at": generated_at,
         "loto_type": loto_type,
         "lookback_window": LOOKBACK_WINDOW,
         "run_options": {
@@ -883,7 +905,15 @@ def train_for_type(loto_type, args):
     eval_report_path = os.path.join(DATA_DIR, f"eval_report_{loto_type}.json")
     save_json(eval_report_path, report)
     prediction_history_path = os.path.join(DATA_DIR, f"prediction_history_{loto_type}.json")
-    save_json(prediction_history_path, build_prediction_history_artifact(loto_type, prediction_history_records))
+    save_json(
+        prediction_history_path,
+        build_prediction_history_artifact(
+            loto_type=loto_type,
+            records=prediction_history_records,
+            generated_at=generated_at,
+            bundle_id=bundle_id,
+        ),
+    )
 
     if args.skip_final_train:
         print("  [3/4] 本番用モデル学習をスキップし、既存成果物を再利用または雛形を保存します...")
@@ -911,6 +941,8 @@ def train_for_type(loto_type, args):
         final_artifact_status=final_artifact_status,
         prediction_history_path=prediction_history_path,
         prediction_history_rows=len(prediction_history_records),
+        generated_at=generated_at,
+        bundle_id=bundle_id,
     )
     save_json(os.path.join(DATA_DIR, f"manifest_{loto_type}.json"), manifest)
 

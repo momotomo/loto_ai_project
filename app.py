@@ -15,7 +15,7 @@ import streamlit as st
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 
-from config import LOOKBACK_WINDOW, LOTO_CONFIG, generate_valid_sample
+from config import ARTIFACT_SCHEMA_VERSION, LOOKBACK_WINDOW, LOTO_CONFIG, generate_valid_sample
 
 # --- Mac環境安定化設定 ---
 warnings.filterwarnings("ignore")
@@ -44,11 +44,28 @@ HISTORY_LIST_COLUMNS = [
 ]
 KERNEL_REF_EXAMPLE = "username/my-loto-kernel"
 SYNC_NOTICE_STATE_KEY = "last_kaggle_sync_notice"
-SYNC_CORE_ARTIFACT_TEMPLATES = [
+LOCAL_CLEAN_NOTICE_STATE_KEY = "last_local_bundle_cleanup_notice"
+SYNC_REQUIRED_BUNDLE_FILES = [
     "{loto_type}_processed.csv",
     "{loto_type}_feature_cols.json",
     "{loto_type}_prob.keras",
     "{loto_type}_scaler.pkl",
+    "manifest_{loto_type}.json",
+]
+SYNC_OPTIONAL_BUNDLE_FILES = [
+    "eval_report_{loto_type}.json",
+    "prediction_history_{loto_type}.json",
+]
+LOCAL_BUNDLE_DELETE_PATTERNS = [
+    os.path.join("data", "{loto_type}_processed.csv"),
+    os.path.join("data", "{loto_type}_feature_cols.json"),
+    os.path.join("data", "manifest_{loto_type}.json"),
+    os.path.join("data", "eval_report_{loto_type}.json"),
+    os.path.join("data", "prediction_history_{loto_type}.json"),
+    os.path.join("data", "prediction_history_{loto_type}.csv"),
+    os.path.join("models", "{loto_type}_feature_cols.json"),
+    os.path.join("models", "{loto_type}_scaler.pkl"),
+    os.path.join("models", "{loto_type}_prob.keras"),
 ]
 
 
@@ -177,6 +194,51 @@ def load_selected_json(selected_files, file_name):
         return None
 
 
+def build_bundle_source_names(loto_type, include_optional=False):
+    templates = list(SYNC_REQUIRED_BUNDLE_FILES)
+    if include_optional:
+        templates.extend(SYNC_OPTIONAL_BUNDLE_FILES)
+    return {template.format(loto_type=loto_type) for template in templates}
+
+
+def get_local_bundle_paths(loto_type):
+    return [pattern.format(loto_type=loto_type) for pattern in LOCAL_BUNDLE_DELETE_PATTERNS]
+
+
+def remove_local_artifacts_for_loto(loto_type):
+    removed = []
+    missing = []
+
+    for path in get_local_bundle_paths(loto_type):
+        if os.path.exists(path):
+            os.remove(path)
+            removed.append(path)
+        else:
+            missing.append(path)
+
+    return {"removed": removed, "missing": missing}
+
+
+def format_cleanup_notice(loto_type, cleanup_result):
+    return (
+        f"{loto_type} のローカル artifact を削除しました。"
+        f" removed={len(cleanup_result.get('removed', []))}"
+        f", missing={len(cleanup_result.get('missing', []))}"
+    )
+
+
+def validate_staged_manifest(manifest, loto_type):
+    if not isinstance(manifest, dict):
+        return "manifest 読み込み失敗"
+    if manifest.get("loto_type") != loto_type:
+        return "manifest の loto_type 不一致"
+    if manifest.get("artifact_schema_version") != ARTIFACT_SCHEMA_VERSION:
+        return "artifact_schema_version 不一致"
+    if not manifest.get("bundle_id"):
+        return "bundle_id 欠落"
+    return None
+
+
 def normalize_loto_targets(raw_targets):
     if isinstance(raw_targets, dict):
         candidates = raw_targets.keys()
@@ -248,31 +310,46 @@ def evaluate_sync_plan(plan, selected_files):
     inferred_targets, inference_source = infer_sync_target_loto_types(selected_files)
     updated_loto_types = []
     skipped = []
+    bundle_details = {}
 
     for loto_type in sorted(LOTO_CONFIG.keys()):
-        expected = {template.format(loto_type=loto_type) for template in SYNC_CORE_ARTIFACT_TEMPLATES}
+        expected = build_bundle_source_names(loto_type)
         present_core = sorted(name for name in expected if name in downloaded_names)
         missing_core = sorted(expected - set(present_core))
         related_files = sorted(name for name in downloaded_names if file_belongs_to_loto(name, loto_type))
+        manifest = load_selected_json(selected_files, f"manifest_{loto_type}.json")
+        manifest_error = validate_staged_manifest(manifest, loto_type) if manifest is not None else "manifest 欠落"
+        manifest_bundle_id = manifest.get("bundle_id") if isinstance(manifest, dict) else None
+        manifest_generated_at = manifest.get("generated_at") if isinstance(manifest, dict) else None
+
+        bundle_details[loto_type] = {
+            "bundle_id": manifest_bundle_id,
+            "generated_at": manifest_generated_at,
+            "manifest_error": manifest_error,
+        }
 
         if inferred_targets is not None:
             if loto_type in inferred_targets:
                 if not related_files:
                     skipped.append((loto_type, "artifact 欠落", []))
-                elif not missing_core:
+                elif manifest_error is None and not missing_core:
                     updated_loto_types.append(loto_type)
                 else:
-                    skipped.append((loto_type, "bundle 不完全", missing_core))
+                    reasons = [manifest_error] if manifest_error else []
+                    reasons.extend(missing_core)
+                    skipped.append((loto_type, "bundle 不完全", reasons))
             elif related_files:
-                skipped.append((loto_type, "今回の実行対象外", []))
+                skipped.append((loto_type, "今回の実行対象外。現行ローカル bundle を維持", []))
             continue
 
         if not present_core:
             continue
-        if not missing_core:
+        if manifest_error is None and not missing_core:
             updated_loto_types.append(loto_type)
         else:
-            skipped.append((loto_type, "bundle 不完全", missing_core))
+            reasons = [manifest_error] if manifest_error else []
+            reasons.extend(missing_core)
+            skipped.append((loto_type, "bundle 不完全", reasons))
 
     filtered_plan = []
     for item in plan:
@@ -295,6 +372,7 @@ def evaluate_sync_plan(plan, selected_files):
             "skipped": skipped,
             "summary_lines": summary_lines,
             "target_inference_source": inference_source,
+            "bundle_details": bundle_details,
         }
 
     lines = ["❌ 更新可能な loto_type が見つかりませんでした。"]
@@ -307,12 +385,14 @@ def evaluate_sync_plan(plan, selected_files):
         "error_message": "\n".join(lines),
         "summary_lines": summary_lines,
         "target_inference_source": inference_source,
+        "bundle_details": bundle_details,
     }
 
 
-def apply_sync_plan(plan):
+def apply_sync_plan(plan, updated_loto_types):
     staging_dir = tempfile.mkdtemp(prefix="kaggle_sync_stage_")
     staged_files = []
+    cleanup_summary = {}
 
     try:
         for item in plan:
@@ -322,11 +402,16 @@ def apply_sync_plan(plan):
                 shutil.copy2(item["source_path"], staged_path)
                 staged_files.append((staged_path, destination))
 
+        for loto_type in updated_loto_types:
+            cleanup_summary[loto_type] = remove_local_artifacts_for_loto(loto_type)
+
         for staged_path, destination in staged_files:
             os.makedirs(os.path.dirname(destination), exist_ok=True)
             os.replace(staged_path, destination)
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
+
+    return cleanup_summary
 
 
 def sync_from_kaggle(kernel_ref):
@@ -357,7 +442,7 @@ def sync_from_kaggle(kernel_ref):
         if not sync_evaluation["ok"]:
             return False, sync_evaluation["error_message"], sync_evaluation
 
-        apply_sync_plan(sync_evaluation["plan"])
+        cleanup_summary = apply_sync_plan(sync_evaluation["plan"], sync_evaluation["updated_loto_types"])
         summary = {
             "kernel_ref": normalized_ref,
             "file_count": len(sync_evaluation["plan"]),
@@ -365,6 +450,8 @@ def sync_from_kaggle(kernel_ref):
             "skipped": sync_evaluation["skipped"],
             "summary_lines": sync_evaluation["summary_lines"],
             "target_inference_source": sync_evaluation["target_inference_source"],
+            "bundle_details": sync_evaluation.get("bundle_details", {}),
+            "cleanup_summary": cleanup_summary,
             "manifest_lines": summarize_manifest_sources(selected_files, sync_evaluation["updated_loto_types"]),
         }
         return True, "✅ Kaggleからの同期が完了しました。", summary
@@ -522,9 +609,16 @@ def inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, sc
     return issues
 
 
-def render_prediction_integrity_issues(loto_type, issues):
+def render_prediction_integrity_issues(loto_type, issues, manifest=None):
     st.error(f"⚠️ {loto_type} の予測用 artifact に整合性エラーがあります。")
     st.write("Kaggle 同期をやり直すか、古い artifact を削除して世代を揃えてください。")
+    if isinstance(manifest, dict):
+        st.write(
+            f"- bundle_id: {manifest.get('bundle_id', '-')}, "
+            f"generated_at: {manifest.get('generated_at', '-')}, "
+            f"artifact_schema_version: {manifest.get('artifact_schema_version', '-')}, "
+            f"loto_type: {manifest.get('loto_type', loto_type)}"
+        )
 
     for issue in issues:
         st.write(f"- {issue['message']}")
@@ -549,7 +643,8 @@ def render_prediction_integrity_issues(loto_type, issues):
 
     st.info(
         "対処案: Kaggle 同期の再実行、`feature_cols.json` / `processed.csv` / `scaler.pkl` / `model.keras` の再取得、"
-        "artifact 世代の揃え直しを実施してください。"
+        "この loto_type の古い artifact を削除して再同期、Kaggle 側で学習完了後に再同期、"
+        "bundle_id が一致する成果物セットで揃え直しを実施してください。"
     )
 
 
@@ -757,6 +852,11 @@ def render_manifest_section(manifest):
             "prediction_history: "
             f"{manifest.get('prediction_history_rows')} rows "
             f"({manifest.get('prediction_history_path', '-')})"
+        )
+    if manifest.get("bundle_id"):
+        st.caption(
+            f"bundle_id={manifest.get('bundle_id')}, "
+            f"artifact_schema_version={manifest.get('artifact_schema_version', '-')}"
         )
     if manifest.get("generated_at"):
         st.caption(f"generated_at={manifest.get('generated_at')}")
@@ -981,7 +1081,7 @@ def render_prediction_history_section(loto_type):
     st.caption(f"top_probability_scores: {format_score_list(detail_row['top_probability_scores'])}")
 
 
-def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols):
+def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols, manifest):
     st.subheader("✨ 次回向けの確率予測と買い目生成")
 
     missing_artifacts = get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler)
@@ -995,7 +1095,7 @@ def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols):
 
     integrity_issues = inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler)
     if integrity_issues:
-        render_prediction_integrity_issues(loto_type, integrity_issues)
+        render_prediction_integrity_issues(loto_type, integrity_issues, manifest)
         st.stop()
 
     last_draw_id = int(df.iloc[-1]["draw_id"])
@@ -1059,7 +1159,19 @@ with st.sidebar:
             st.caption(f"target inference: {sync_notice['target_inference_source']}")
         for line in sync_notice.get("summary_lines", []):
             st.caption(line)
+        for loto_type, bundle_info in (sync_notice.get("bundle_details") or {}).items():
+            if bundle_info.get("bundle_id"):
+                st.caption(
+                    f"{loto_type}: bundle_id={bundle_info['bundle_id']} / "
+                    f"generated_at={bundle_info.get('generated_at', '-')}"
+                )
         for line in sync_notice.get("manifest_lines", []):
+            st.caption(line)
+
+    cleanup_notice = st.session_state.pop(LOCAL_CLEAN_NOTICE_STATE_KEY, None)
+    if cleanup_notice:
+        st.success(cleanup_notice["message"])
+        for line in cleanup_notice.get("details", []):
             st.caption(line)
 
     default_kernel_ref = os.getenv("KAGGLE_SLUG", "")
@@ -1087,6 +1199,7 @@ with st.sidebar:
                             + f" Kernel Ref: {normalized_ref} / files={((sync_summary or {}).get('file_count', '-'))}",
                             "target_inference_source": (sync_summary or {}).get("target_inference_source"),
                             "summary_lines": (sync_summary or {}).get("summary_lines", []),
+                            "bundle_details": (sync_summary or {}).get("bundle_details", {}),
                             "manifest_lines": (sync_summary or {}).get("manifest_lines", []),
                         }
                         st.cache_data.clear()
@@ -1094,6 +1207,22 @@ with st.sidebar:
                         st.rerun()
                     else:
                         st.error(message)
+
+    with st.expander("🧹 ローカル artifact 管理", expanded=False):
+        st.caption("対象 loto_type の processed / feature_cols / scaler / model / manifest / eval_report / prediction_history を削除します。")
+        for loto_type in sorted(LOTO_CONFIG.keys()):
+            if st.button(f"🧹 {loto_type} のローカル artifact を削除", use_container_width=True, key=f"cleanup-{loto_type}"):
+                cleanup_result = remove_local_artifacts_for_loto(loto_type)
+                st.session_state[LOCAL_CLEAN_NOTICE_STATE_KEY] = {
+                    "message": format_cleanup_notice(loto_type, cleanup_result),
+                    "details": [
+                        f"removed: {', '.join(cleanup_result['removed'])}" if cleanup_result["removed"] else "removed: なし",
+                        f"missing: {', '.join(cleanup_result['missing'])}" if cleanup_result["missing"] else "missing: なし",
+                    ],
+                }
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.rerun()
 
 
 st.title("🎯 宝くじ AI確率予測システム")
@@ -1128,4 +1257,4 @@ with tab3:
     render_prediction_history_section(selected_loto)
 
 with tab1:
-    render_prediction_tab(selected_loto, config, df, model, scaler, feature_cols)
+    render_prediction_tab(selected_loto, config, df, model, scaler, feature_cols, manifest)

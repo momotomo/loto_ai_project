@@ -26,11 +26,13 @@
   - `processed.csv` と `feature_cols.json` の世代不一致
   - 同期失敗後に古い `scaler.pkl` / `model.keras` が残っている
   - Kaggle 同期で一部 artifact だけ古いまま混在している
+  - `bundle_id` の異なる成果物が混ざっている
 - UI 上で見る場所:
   - 予測タブのエラーブロック
   - 評価タブの manifest 表示
   - サイドバー同期欄の最後の同期メッセージ
 - 復旧:
+  - サイドバーの `🧹 {loto_type} のローカル artifact を削除` を実行する
   - Kaggle 同期を再実行する
   - 必要に応じて `feature_cols.json` / `processed.csv` / `scaler.pkl` / `model.keras` を削除して再取得する
   - prediction tab は安全停止するが、評価タブと実績照合タブはそのまま確認してよい
@@ -119,6 +121,8 @@
 - GitHub Actions の翌営業日実行では、今回対象の loto_type だけ学習される。
 - そのため Kaggle Output に全 loto_type の完全 bundle が常にあるとは限らない。
 - Streamlit 同期は `kaggle_run_summary.json` → `run_config.json` → `manifest_*.json` の順で今回対象を推定し、loto_type ごとに完全 bundle を判定する。
+- bundle 判定は `manifest_{loto_type}.json` の `artifact_schema_version` / `bundle_id` と必須成果物の存在で行う。
+- 更新対象 loto_type では、配置前に古いローカル artifact を削除してから新 bundle を一括配置する。
 - UI 上の表示:
   - `更新: loto6`
   - `スキップ: loto7（今回の実行対象外）`
@@ -164,3 +168,4 @@
 - Streamlit の整合性エラー時は app 全体を落とさず、予測タブだけ安全停止して評価タブと実績照合タブを残すようにした。artifact 世代の切り分けを UI 上で継続できる方を優先した。
 - Kaggle 同期は一時ディレクトリへ全 artifact を集め、bundle が不完全ならローカル更新を中止するようにした。partial update で世代が混ざる事故を減らすため。
 - ただし翌営業日実行では非対象 loto_type の不完全 bundle が混ざるため、同期判定は global ではなく loto_type 単位に変えた。対象外はスキップ表示に留め、対象 loto_type だけ厳密に守る方針にした。
+- `artifact_schema_version` / `bundle_id` を manifest に入れ、clean sync はその bundle 単位で行うようにした。schema version 変更直後や初回移行時は `miniloto` / `loto6` / `loto7` を一度フル再学習して bundle を揃え、その後は partial update で運用する。

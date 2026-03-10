@@ -22,6 +22,7 @@
 - `processed.csv` と `feature_cols.json` / `scaler.pkl` / `model.keras` の世代がずれると、予測タブは整合性エラーで停止します。
 - その場合でも評価タブと実績照合タブは見られるようにしているので、manifest や prediction history を先に確認できます。
 - GitHub Actions の翌営業日実行では、対象 loto_type だけ学習されます。Kaggle 同期も loto_type ごとに bundle 完全性を判定し、完全なものだけ部分更新します。
+- `manifest_{loto_type}.json` には `artifact_schema_version` と `bundle_id` が入ります。同期はこの bundle 単位で検証し、更新時は古いローカル artifact を先に削除してから新しい bundle を配置します。
 
 ## Docs
 - `AGENT.md`
