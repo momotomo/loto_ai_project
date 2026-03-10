@@ -157,37 +157,60 @@ jobs:
         run: kaggle kernels push -p "$RUNNER_TEMP/kaggle-kernel"
 
       - name: Poll kernel status
+        shell: bash
         run: |
           python - <<'PY'
           import os
+          import subprocess
           import sys
           import time
-          from kaggle.api.kaggle_api_extended import KaggleApi
 
           kernel_id = os.environ["KAGGLE_KERNEL_ID"]
           timeout_seconds = int(os.environ.get("KAGGLE_STATUS_TIMEOUT_SECONDS", "7200"))
           poll_seconds = int(os.environ.get("KAGGLE_STATUS_POLL_SECONDS", "30"))
           deadline = time.time() + timeout_seconds
+          poll_attempt = 0
 
-          api = KaggleApi()
-          api.authenticate()
-
-          last_status = None
-          success_states = {"complete"}
-          failure_states = {"failed", "error", "cancelled"}
+          def classify_status(raw_text):
+              lower_text = raw_text.lower()
+              if "complete" in lower_text:
+                  return "complete"
+              if any(token in lower_text for token in ("error", "failed", "cancelled")):
+                  return "failed"
+              if any(token in lower_text for token in ("running", "queued")):
+                  return "running"
+              return "unknown"
 
           while time.time() < deadline:
-              status = str(api.kernel_status(kernel_id)).lower()
-              if status != last_status:
-                  print(f"kernel_status={status}", flush=True)
-                  last_status = status
+              poll_attempt += 1
+              result = subprocess.run(
+                  ["kaggle", "kernels", "status", kernel_id],
+                  capture_output=True,
+                  text=True,
+              )
+              raw_output = "\n".join(
+                  part.strip() for part in (result.stdout, result.stderr) if part and part.strip()
+              )
+              status = classify_status(raw_output)
 
-              if status in success_states:
+              print(f"poll_attempt={poll_attempt}", flush=True)
+              print(f"kernel_status={status}", flush=True)
+              print(f"kernel_status_cli_returncode={result.returncode}", flush=True)
+              print(f"kernel_status_raw={raw_output or '<empty>'}", flush=True)
+
+              if result.returncode == 0 and status == "complete":
+                  print(f"Kaggle kernel completed successfully: {kernel_id}", flush=True)
                   sys.exit(0)
-              if status in failure_states:
-                  raise SystemExit(f"Kaggle kernel finished with status={status}")
+
+              if status == "failed":
+                  raise SystemExit(f"Kaggle kernel finished with failure status: {raw_output or 'unknown'}")
+
+              if status not in {"running", "complete"}:
+                  print("Kernel status is unknown; retrying.", flush=True)
 
               time.sleep(poll_seconds)
 
-          raise SystemExit(f"Timed out waiting for Kaggle kernel: {kernel_id}")
+          raise SystemExit(
+              f"Timed out after {timeout_seconds}s waiting for Kaggle kernel to complete: {kernel_id}"
+          )
           PY
