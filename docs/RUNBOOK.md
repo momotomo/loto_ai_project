@@ -18,6 +18,7 @@
   - Notebook Output に `eval_report_*.json` / `manifest_*.json` / `*_prob.keras` があるか
 - 復旧:
   - Notebook 側で学習を再実行し、Output が更新されたことを確認してから再同期する。
+  - 翌営業日実行では対象 loto_type だけが学習対象なので、他 loto_type の `processed.csv` だけが残っていても即失敗ではない。
 
 ## Streamlit の KeyError / 整合性エラー
 - 症状: 予測タブで `df[feature_cols]` 付近が落ちる、または整合性エラーが表示される。
@@ -114,6 +115,19 @@
   - private kernel なら所有者アカウント、または権限付きアカウントの token に切り替える
   - 404 の場合は owner / slug の typo を疑う
 
+## Kaggle 同期の部分更新
+- GitHub Actions の翌営業日実行では、今回対象の loto_type だけ学習される。
+- そのため Kaggle Output に全 loto_type の完全 bundle が常にあるとは限らない。
+- Streamlit 同期は `kaggle_run_summary.json` → `run_config.json` → `manifest_*.json` の順で今回対象を推定し、loto_type ごとに完全 bundle を判定する。
+- UI 上の表示:
+  - `更新: loto6`
+  - `スキップ: loto7（今回の実行対象外）`
+  - `スキップ: miniloto（bundle 不完全）`
+- 復旧:
+  - 今回対象外のスキップは正常動作
+  - 今回対象の loto_type が `bundle 不完全` なら、その loto_type の学習が途中で終わっていないか Kaggle Output を確認する
+  - 全 loto_type がスキップされる場合だけ同期エラーになる
+
 ## Kaggle で file not found が出る
 - 症状: Kaggle ログで `data_collector.py` や `train_prob_model.py` が見つからない。
 - 確認:
@@ -149,3 +163,4 @@
 - prediction history の正式な比較対象は `predicted_top_k` とし、サンプリング買い目履歴とは分離した。将来 live 予測を扱うときは `pending/resolved` の別 artifact に広げる前提にしている。
 - Streamlit の整合性エラー時は app 全体を落とさず、予測タブだけ安全停止して評価タブと実績照合タブを残すようにした。artifact 世代の切り分けを UI 上で継続できる方を優先した。
 - Kaggle 同期は一時ディレクトリへ全 artifact を集め、bundle が不完全ならローカル更新を中止するようにした。partial update で世代が混ざる事故を減らすため。
+- ただし翌営業日実行では非対象 loto_type の不完全 bundle が混ざるため、同期判定は global ではなく loto_type 単位に変えた。対象外はスキップ表示に留め、対象 loto_type だけ厳密に守る方針にした。

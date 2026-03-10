@@ -21,6 +21,7 @@
 - Kaggle 同期欄の入力は `Kernel Ref (owner/kernel-slug)` 形式です。例: `username/my-loto-kernel`
 - `processed.csv` と `feature_cols.json` / `scaler.pkl` / `model.keras` の世代がずれると、予測タブは整合性エラーで停止します。
 - その場合でも評価タブと実績照合タブは見られるようにしているので、manifest や prediction history を先に確認できます。
+- GitHub Actions の翌営業日実行では、対象 loto_type だけ学習されます。Kaggle 同期も loto_type ごとに bundle 完全性を判定し、完全なものだけ部分更新します。
 
 ## Docs
 - `AGENT.md`

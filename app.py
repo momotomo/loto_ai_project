@@ -166,39 +166,74 @@ def build_sync_plan(download_dir):
     return plan, selected_files
 
 
-def validate_sync_plan(plan):
-    downloaded_names = {item["file_name"] for item in plan}
-    incomplete_bundles = []
-
-    for loto_type in sorted(LOTO_CONFIG.keys()):
-        expected = {template.format(loto_type=loto_type) for template in SYNC_CORE_ARTIFACT_TEMPLATES}
-        present = sorted(name for name in expected if name in downloaded_names)
-        if present and len(present) != len(expected):
-            missing = sorted(expected - set(present))
-            incomplete_bundles.append((loto_type, present, missing))
-
-    if not incomplete_bundles:
+def load_selected_json(selected_files, file_name):
+    entry = selected_files.get(file_name)
+    if not entry:
+        return None
+    try:
+        with open(entry["source_path"], "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
         return None
 
-    lines = ["❌ Kaggle Output に不完全な artifact bundle が含まれているため、ローカル更新を中止しました。"]
-    for loto_type, present, missing in incomplete_bundles:
-        lines.append(f"- {loto_type}: present={present}, missing={missing}")
-    lines.append("- Kaggle 側で学習を完了させてから再同期してください。")
-    return "\n".join(lines)
+
+def normalize_loto_targets(raw_targets):
+    if isinstance(raw_targets, dict):
+        candidates = raw_targets.keys()
+    elif isinstance(raw_targets, (list, tuple, set)):
+        candidates = raw_targets
+    else:
+        return []
+    return sorted(target for target in candidates if target in LOTO_CONFIG)
 
 
-def summarize_manifest_sources(selected_files):
+def infer_sync_target_loto_types(selected_files):
+    summary_payload = load_selected_json(selected_files, "kaggle_run_summary.json")
+    if isinstance(summary_payload, dict):
+        run_config = summary_payload.get("run_config") if isinstance(summary_payload.get("run_config"), dict) else {}
+        targets = normalize_loto_targets(run_config.get("targets"))
+        if targets:
+            return targets, "kaggle_run_summary.json"
+        targets = normalize_loto_targets(summary_payload.get("targets"))
+        if targets:
+            return targets, "kaggle_run_summary.json"
+
+    run_config_payload = load_selected_json(selected_files, "run_config.json")
+    if isinstance(run_config_payload, dict):
+        targets = normalize_loto_targets(run_config_payload.get("targets"))
+        if targets:
+            return targets, "run_config.json"
+
+    manifest_targets = [
+        loto_type for loto_type in sorted(LOTO_CONFIG.keys()) if f"manifest_{loto_type}.json" in selected_files
+    ]
+    if manifest_targets:
+        return manifest_targets, "manifest_*.json"
+
+    return None, None
+
+
+def file_belongs_to_loto(file_name, loto_type):
+    exact_matches = {
+        f"{loto_type}_raw.csv",
+        f"{loto_type}_processed.csv",
+        f"{loto_type}_feature_cols.json",
+        f"{loto_type}_prob.keras",
+        f"{loto_type}_scaler.pkl",
+        f"eval_report_{loto_type}.json",
+        f"manifest_{loto_type}.json",
+        f"prediction_history_{loto_type}.json",
+        f"prediction_history_{loto_type}.csv",
+    }
+    return file_name in exact_matches
+
+
+def summarize_manifest_sources(selected_files, updated_loto_types):
     summaries = []
 
-    for loto_type in sorted(LOTO_CONFIG.keys()):
-        manifest_file = f"manifest_{loto_type}.json"
-        manifest_entry = selected_files.get(manifest_file)
-        if not manifest_entry:
-            continue
-        try:
-            with open(manifest_entry["source_path"], "r", encoding="utf-8") as handle:
-                manifest = json.load(handle)
-        except Exception:
+    for loto_type in updated_loto_types:
+        manifest = load_selected_json(selected_files, f"manifest_{loto_type}.json")
+        if not isinstance(manifest, dict):
             continue
         summaries.append(
             f"{loto_type}: generated_at={manifest.get('generated_at', '-')}, "
@@ -206,6 +241,73 @@ def summarize_manifest_sources(selected_files):
         )
 
     return summaries
+
+
+def evaluate_sync_plan(plan, selected_files):
+    downloaded_names = {item["file_name"] for item in plan}
+    inferred_targets, inference_source = infer_sync_target_loto_types(selected_files)
+    updated_loto_types = []
+    skipped = []
+
+    for loto_type in sorted(LOTO_CONFIG.keys()):
+        expected = {template.format(loto_type=loto_type) for template in SYNC_CORE_ARTIFACT_TEMPLATES}
+        present_core = sorted(name for name in expected if name in downloaded_names)
+        missing_core = sorted(expected - set(present_core))
+        related_files = sorted(name for name in downloaded_names if file_belongs_to_loto(name, loto_type))
+
+        if inferred_targets is not None:
+            if loto_type in inferred_targets:
+                if not related_files:
+                    skipped.append((loto_type, "artifact 欠落", []))
+                elif not missing_core:
+                    updated_loto_types.append(loto_type)
+                else:
+                    skipped.append((loto_type, "bundle 不完全", missing_core))
+            elif related_files:
+                skipped.append((loto_type, "今回の実行対象外", []))
+            continue
+
+        if not present_core:
+            continue
+        if not missing_core:
+            updated_loto_types.append(loto_type)
+        else:
+            skipped.append((loto_type, "bundle 不完全", missing_core))
+
+    filtered_plan = []
+    for item in plan:
+        owning_loto_types = [loto_type for loto_type in LOTO_CONFIG if file_belongs_to_loto(item["file_name"], loto_type)]
+        if not owning_loto_types or owning_loto_types[0] in updated_loto_types:
+            filtered_plan.append(item)
+
+    summary_lines = [f"更新: {', '.join(updated_loto_types)}"] if updated_loto_types else []
+    for loto_type, reason, missing in skipped:
+        if missing:
+            summary_lines.append(f"スキップ: {loto_type}（{reason}: {', '.join(missing)}）")
+        else:
+            summary_lines.append(f"スキップ: {loto_type}（{reason}）")
+
+    if updated_loto_types:
+        return {
+            "ok": True,
+            "plan": filtered_plan,
+            "updated_loto_types": updated_loto_types,
+            "skipped": skipped,
+            "summary_lines": summary_lines,
+            "target_inference_source": inference_source,
+        }
+
+    lines = ["❌ 更新可能な loto_type が見つかりませんでした。"]
+    if inference_source:
+        lines.append(f"- target inference source: {inference_source}")
+    lines.extend(summary_lines)
+    lines.append("- Kaggle 側の今回対象と artifact bundle を確認してください。")
+    return {
+        "ok": False,
+        "error_message": "\n".join(lines),
+        "summary_lines": summary_lines,
+        "target_inference_source": inference_source,
+    }
 
 
 def apply_sync_plan(plan):
@@ -251,15 +353,19 @@ def sync_from_kaggle(kernel_ref):
         if not plan:
             return False, "❌ Kaggle Output から同期対象 artifact を見つけられませんでした。", None
 
-        validation_error = validate_sync_plan(plan)
-        if validation_error:
-            return False, validation_error, None
+        sync_evaluation = evaluate_sync_plan(plan, selected_files)
+        if not sync_evaluation["ok"]:
+            return False, sync_evaluation["error_message"], sync_evaluation
 
-        apply_sync_plan(plan)
+        apply_sync_plan(sync_evaluation["plan"])
         summary = {
             "kernel_ref": normalized_ref,
-            "file_count": len(plan),
-            "manifest_lines": summarize_manifest_sources(selected_files),
+            "file_count": len(sync_evaluation["plan"]),
+            "updated_loto_types": sync_evaluation["updated_loto_types"],
+            "skipped": sync_evaluation["skipped"],
+            "summary_lines": sync_evaluation["summary_lines"],
+            "target_inference_source": sync_evaluation["target_inference_source"],
+            "manifest_lines": summarize_manifest_sources(selected_files, sync_evaluation["updated_loto_types"]),
         }
         return True, "✅ Kaggleからの同期が完了しました。", summary
     except Exception as exc:
@@ -949,6 +1055,10 @@ with st.sidebar:
     sync_notice = st.session_state.pop(SYNC_NOTICE_STATE_KEY, None)
     if sync_notice:
         st.success(sync_notice["message"])
+        if sync_notice.get("target_inference_source"):
+            st.caption(f"target inference: {sync_notice['target_inference_source']}")
+        for line in sync_notice.get("summary_lines", []):
+            st.caption(line)
         for line in sync_notice.get("manifest_lines", []):
             st.caption(line)
 
@@ -973,7 +1083,10 @@ with st.sidebar:
                     success, message, sync_summary = sync_from_kaggle(normalized_ref)
                     if success:
                         st.session_state[SYNC_NOTICE_STATE_KEY] = {
-                            "message": message + f" Kernel Ref: {normalized_ref} / files={((sync_summary or {}).get('file_count', '-'))}",
+                            "message": message
+                            + f" Kernel Ref: {normalized_ref} / files={((sync_summary or {}).get('file_count', '-'))}",
+                            "target_inference_source": (sync_summary or {}).get("target_inference_source"),
+                            "summary_lines": (sync_summary or {}).get("summary_lines", []),
                             "manifest_lines": (sync_summary or {}).get("manifest_lines", []),
                         }
                         st.cache_data.clear()
