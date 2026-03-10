@@ -214,13 +214,15 @@ def render_manifest_section(manifest):
 
     st.subheader("🧾 Artifact Manifest")
     metrics_summary = manifest.get("metrics_summary", {})
-    walk_forward_model = metrics_summary.get("walk_forward_model", {})
+    primary_model = metrics_summary.get("primary_model") or metrics_summary.get("walk_forward_model", {})
     best_static = metrics_summary.get("best_static_baseline", {})
+    evaluation_source = metrics_summary.get("evaluation_source", "walk_forward")
+    final_artifact_status = metrics_summary.get("final_artifact_status", "-")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("latest_draw_id", manifest.get("latest_draw_id"))
-    col2.metric("WF LogLoss", format_metric(walk_forward_model.get("logloss_mean")))
-    col3.metric("WF Brier", format_metric(walk_forward_model.get("brier_mean")))
+    col2.metric("Primary LogLoss", format_metric(primary_model.get("logloss_mean")))
+    col3.metric("Primary Brier", format_metric(primary_model.get("brier_mean")))
     col4.metric("Best static", BASELINE_LABELS.get(best_static.get("name"), best_static.get("name", "-")))
 
     train_range = manifest.get("train_range", {})
@@ -236,6 +238,7 @@ def render_manifest_section(manifest):
             f"brier={format_metric(delta.get('brier'))}, "
             f"top-k={format_metric(delta.get('mean_overlap_top_k'))}"
         )
+    st.caption(f"evaluation_source={evaluation_source}, final_artifact_status={final_artifact_status}")
 
     with st.expander("Manifest 詳細", expanded=False):
         st.json(manifest)
@@ -344,6 +347,7 @@ with st.sidebar:
                 if success:
                     st.success(message)
                     st.cache_data.clear()
+                    st.cache_resource.clear()
                     st.rerun()
                 else:
                     st.error(message)
