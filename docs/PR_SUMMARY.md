@@ -10,6 +10,7 @@
 - `app.py` に「✅ 実績との照合」タブを追加し、回別の hit 数サマリと一覧を確認できるようにした。
 - `app.py` に artifact 整合性チェックを追加し、`processed.csv` / `feature_cols.json` / `scaler.pkl` / `model.keras` の世代不一致を分かりやすく表示するようにした。
 - Kaggle 同期 UI を `Kernel Ref (owner/kernel-slug)` に変更し、403 / 404 の切り分けメッセージと staged sync を追加した。
+- Kaggle staged sync を global 判定から per-loto 判定へ変更し、今回対象外の loto_type は部分更新から安全にスキップできるようにした。
 - `AGENT.md` と `docs/` を追加し、運用・評価・復旧手順を明文化した。
 
 ## 実装判断
@@ -21,3 +22,4 @@
 - prediction history は評価用 artifact として保存し、今回の範囲では live 予測履歴とは分離した。将来の pending/resolved 方式追加時に互換を崩しにくくするため。
 - 整合性エラー時は prediction tab のみ停止し、評価タブと実績照合タブは残す方針にした。artifact 世代の切り分けを UI 上で続けられるため。
 - Kaggle 同期は download 後に bundle を検査し、不完全なら local replace を始めない方針にした。partial sync による世代混在を避けるため。
+- ただし翌営業日の partial run では非対象 loto_type に `processed.csv` だけ残るので、bundle 検査も loto_type 単位に変更した。対象外はスキップ、対象だけ厳密更新とした。
