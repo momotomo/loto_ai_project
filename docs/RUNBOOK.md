@@ -67,12 +67,26 @@
 - 復旧:
   - まず `config-and-targets` job が ready=true になっているか確認する。
   - `config-and-targets` job の `targets` が空なら正常 skip。翌営業日条件に当たるか確認する。
+  - `Prepare kernel build directory` の後に出る `script.py size_bytes=` と `run_config.json` の内容が想定どおりか確認する。
   - `kernel_status` が `failed/error/cancelled` の場合は Kaggle Notebook のログを確認する。
   - Kaggle schedule は停止し、Actions 側だけを実行源にする。
+
+## Kaggle で file not found が出る
+- 症状: Kaggle ログで `data_collector.py` や `train_prob_model.py` が見つからない。
+- 確認:
+  - workflow の `Debug build directory` ステップで `kernel-metadata.json` の `code_file` が `script.py` を指す前提になっているか
+  - `script.py size_bytes=` が極端に小さくないか
+  - build dir の `run_config.json` が対象ロトと preset を正しく持っているか
+  - Kaggle ログの `[kaggle-entry] listing for /kaggle/working/app` に `data_collector.py` / `train_prob_model.py` / `run_config.json` が出ているか
+- 復旧:
+  - `scripts/kaggle_prepare_kernel_dir.py` の payload allowlist に必要ファイルが含まれているか見直す。
+  - `scripts/kaggle_entry.py` が `/kaggle/working/app` へ payload を展開できているか確認する。
+  - `Missing extracted payload files:` が出ている場合は、そのファイルが zip payload に入っていない。
 
 ## 翌営業日ルールの確認
 - 祝日判定は内閣府 CSV `https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv` を使う。
 - 営業日は平日かつ祝日でない日。
+- GitHub Actions の cron は UTC なので、`09:10 JST` は `cron: '10 0 * * 1-5'` で表現する。
 - 平常時の対象:
   - 月曜: `loto7`
   - 火曜: `loto6`
@@ -82,17 +96,9 @@
 - ローカル確認例:
   - `python scripts/compute_kick_targets.py --today 2026-03-11`
 
-## Kaggle で file not found が出る
-- 症状: Kaggle ログで `data_collector.py` や `train_prob_model.py` が見つからない。
-- 確認:
-  - workflow の `Debug build directory` ステップに対象ファイルが出ているか
-  - `kernel-metadata.json` の `code_file` が `kaggle_entry.py` を指しているか
-  - Kaggle ログの `[kaggle-entry] debug listing` で推定 repo root の中身が見えているか
-- 復旧:
-  - `scripts/kaggle_prepare_kernel_dir.py` の allowlist に必要ファイルが含まれているか見直す。
-  - `scripts/kaggle_entry.py` の root 探索先に `repo_root` と `repo_root/src` の両方が入っているか確認する。
-
 ## 今回の実装判断
 - GitHub Actions の schedule は広めに「平日朝」で起動し、実際に kick するかは `compute_kick_targets.py` 側で決めるようにした。
-- Kaggle 側 path は `/kaggle/src` の固定値をやめ、`__file__` と `cwd` から root を探索する方式にした。
+- 祝日考慮は外部ライブラリを足さず、内閣府の祝日 CSV を直接読む方式にした。
+- Kaggle script kernel では `script.py` 単体しか見えない前提に切り替え、allowlist を zip payload にして `script.py` へ埋め込む方式にした。
+- build dir にある `run_config.json` は workflow デバッグ用の見える化で、Kaggle 実行時は `script.py` 内の埋め込み payload から展開された `run_config.json` を使う。
 - 対象ロトだけを `run_config.json` で渡し、Kaggle ではその target だけ `data_collector.py` と `train_prob_model.py` を回すようにした。

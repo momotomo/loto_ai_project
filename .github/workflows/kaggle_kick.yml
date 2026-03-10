@@ -149,6 +149,9 @@ jobs:
         run: |
           echo "kick_targets=$TARGETS_CSV"
           find "$RUNNER_TEMP/kaggle-kernel" -maxdepth 2 -type f | sort
+          echo "script.py size_bytes=$(wc -c < "$RUNNER_TEMP/kaggle-kernel/script.py")"
+          echo "run_config.json"
+          cat "$RUNNER_TEMP/kaggle-kernel/run_config.json"
 
       - name: Push kernel to Kaggle
         run: kaggle kernels push -p "$RUNNER_TEMP/kaggle-kernel"

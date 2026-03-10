@@ -9,6 +9,7 @@
 - `.github/workflows/kaggle_kick.yml`
 - `scripts/kaggle_prepare_kernel_dir.py`
 - `scripts/kaggle_entry.py`
+- `scripts/compute_kick_targets.py`
 
 ## セットアップ
 1. Kaggle で API token を発行し、`kaggle.json` の中身を GitHub Secret `KAGGLE_JSON` に登録する。
@@ -22,13 +23,16 @@
 - 対象が空なら workflow 全体は成功終了し、Kaggle kick は skip される。
 - 設定済みかつ対象ありなら build dir を生成し、`kaggle kernels push -p <build_dir>` で新しい実行を開始する。
 - その後は Kaggle API で status をポーリングし、`complete` で成功、`failed/error/cancelled` で失敗にする。
+- `Debug build directory` ステップで `script.py` のサイズと `run_config.json` の内容を出す。push 前の payload 生成結果を確認するためのログで、Kaggle 実行時には `script.py` 内の埋め込み payload が使われる。
 
 ## Kaggle 上での実行内容
-- `scripts/kaggle_prepare_kernel_dir.py` が allowlist で必要ファイルだけを build dir にコピーし、`run_config.json` を生成する。
-- `scripts/kaggle_entry.py` は `__file__` と `cwd` から repo root を探索し、見つけた root を `cwd` にして実行する。
+- Kaggle script kernel では `code_file` 単体しか確実に見えない前提にする。`/kaggle/src` に複数ファイルが並ぶことを期待しない。
+- `scripts/kaggle_prepare_kernel_dir.py` は allowlist の Python ファイルと `data/*.csv` と `run_config.json` を zip 化し、base64 payload として `script.py` に埋め込む。
+- `scripts/kaggle_entry.py` は runtime テンプレートとして使い、起動時に payload を `/kaggle/working/app` へ展開してから、そのディレクトリを `cwd` にして実行する。
 - `run_config.json` に入っている targets だけを順に処理し、各 target ごとに `data_collector.py --loto_type X` と `train_prob_model.py --loto_type X --preset fast --skip_legacy_holdout` を実行する。
 - 取得失敗時は build dir に同梱した `data/` を fallback として使い、学習を継続する。
 - 成果物は `/kaggle/working` 配下に残るので、Kaggle Output から同期できる。
+- payload 展開方式にした理由は、Kaggle 側で `/kaggle/src` に `script.py` しか存在せず `data_collector.py` / `train_prob_model.py` が見つからない失敗を根本的に避けるため。
 
 ## 翌営業日判定
 - 祝日判定は内閣府 CSV `https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv` を参照する。
@@ -60,5 +64,6 @@
 - 既存 Kaggle schedule と二重実行:
   - Kaggle 側 schedule を止め、GitHub Actions 側だけ残す。
 - Kaggle で `file not found`:
-  - workflow の `Debug build directory` ステップで対象ファイルが build dir に入っているか確認する。
-  - `kaggle_entry.py` の `debug listing` ログで root 推定先とその中身を確認する。
+  - workflow の `Debug build directory` ステップで `script.py` のサイズが極端に小さくないか、`run_config.json` が期待どおりか確認する。
+  - Kaggle ログの `[kaggle-entry] listing for /kaggle/working/app` に、展開後の `data_collector.py` / `train_prob_model.py` / `run_config.json` が出ているか確認する。
+  - payload 展開先に必要ファイルが無い場合は `Missing extracted payload files:` のログに欠落ファイル名が出る。

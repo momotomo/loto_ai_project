@@ -1,10 +1,15 @@
 import argparse
+import base64
 import json
 import shutil
+import textwrap
+import zipfile
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 
+PAYLOAD_PLACEHOLDER = "__KAGGLE_PAYLOAD_BASE64__"
 ROOT_FILES = [
     "config.py",
     "data_collector.py",
@@ -12,13 +17,11 @@ ROOT_FILES = [
     "predict.py",
     "update_system.py",
 ]
-ROOT_DIRS = [
-    "data",
-]
+DATA_GLOB = "data/*.csv"
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Prepare a Kaggle kernel build directory from the repository.")
+    parser = argparse.ArgumentParser(description="Prepare a self-contained Kaggle kernel build directory.")
     parser.add_argument("--repo-root", default=".")
     parser.add_argument("--build-dir", required=True)
     parser.add_argument("--kernel-id", required=True, help="username/kernel-slug")
@@ -40,22 +43,11 @@ def reset_build_dir(build_dir):
     build_dir.mkdir(parents=True, exist_ok=True)
 
 
-def copy_file(source, destination):
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-
-
-def copy_data_dir(source_dir, destination_dir):
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    for csv_path in sorted(source_dir.glob("*.csv")):
-        copy_file(csv_path, destination_dir / csv_path.name)
-
-
 def build_metadata(kernel_id, kernel_title):
     return {
         "id": kernel_id,
         "title": kernel_title,
-        "code_file": "kaggle_entry.py",
+        "code_file": "script.py",
         "language": "python",
         "kernel_type": "script",
         "is_private": True,
@@ -73,35 +65,71 @@ def build_run_config(args):
     }
 
 
-def main():
-    args = parse_args()
-    repo_root = Path(args.repo_root).resolve()
-    build_dir = Path(args.build_dir).resolve()
-    entry_script = repo_root / "scripts" / "kaggle_entry.py"
-
-    reset_build_dir(build_dir)
-
+def collect_payload_sources(repo_root):
+    sources = []
     for relative_path in ROOT_FILES:
         source = repo_root / relative_path
         if not source.exists():
             raise SystemExit(f"Missing required source file: {source}")
-        copy_file(source, build_dir / relative_path)
+        sources.append(source)
 
-    for relative_path in ROOT_DIRS:
-        source = repo_root / relative_path
-        if source.exists():
-            copy_data_dir(source, build_dir / relative_path)
+    for csv_path in sorted(repo_root.glob(DATA_GLOB)):
+        sources.append(csv_path)
 
-    copy_file(entry_script, build_dir / "kaggle_entry.py")
+    return sources
 
+
+def build_payload_bytes(repo_root, run_config):
+    payload_sources = collect_payload_sources(repo_root)
+    buffer = BytesIO()
+
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for source in payload_sources:
+            archive.write(source, arcname=source.relative_to(repo_root).as_posix())
+        archive.writestr("run_config.json", json.dumps(run_config, ensure_ascii=False, indent=2) + "\n")
+
+    return buffer.getvalue(), payload_sources
+
+
+def render_payload_text(payload_bytes):
+    encoded = base64.b64encode(payload_bytes).decode("ascii")
+    return "\n".join(textwrap.wrap(encoded, 120))
+
+
+def render_script(repo_root, payload_text):
+    template_path = repo_root / "scripts" / "kaggle_entry.py"
+    template = template_path.read_text(encoding="utf-8")
+    if PAYLOAD_PLACEHOLDER not in template:
+        raise SystemExit(f"Payload placeholder not found in template: {template_path}")
+    return template.replace(PAYLOAD_PLACEHOLDER, payload_text, 1)
+
+
+def write_json(path, payload):
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+
+
+def main():
+    args = parse_args()
+    repo_root = Path(args.repo_root).resolve()
+    build_dir = Path(args.build_dir).resolve()
+
+    reset_build_dir(build_dir)
+
+    run_config = build_run_config(args)
+    payload_bytes, payload_sources = build_payload_bytes(repo_root, run_config)
+    script_text = render_script(repo_root, render_payload_text(payload_bytes))
     metadata = build_metadata(args.kernel_id, args.kernel_title or slug_to_title(args.kernel_id))
-    with open(build_dir / "kernel-metadata.json", "w", encoding="utf-8") as handle:
-        json.dump(metadata, handle, indent=2, ensure_ascii=False)
 
-    with open(build_dir / "run_config.json", "w", encoding="utf-8") as handle:
-        json.dump(build_run_config(args), handle, indent=2, ensure_ascii=False)
+    (build_dir / "script.py").write_text(script_text, encoding="utf-8")
+    write_json(build_dir / "kernel-metadata.json", metadata)
+    write_json(build_dir / "run_config.json", run_config)
 
     print(f"Prepared Kaggle kernel directory: {build_dir}")
+    print(f"Embedded payload files: {[path.relative_to(repo_root).as_posix() for path in payload_sources]}")
+    print(f"Embedded payload size_bytes={len(payload_bytes)}")
+    print(f"Generated script size_bytes={(build_dir / 'script.py').stat().st_size}")
 
 
 if __name__ == "__main__":
