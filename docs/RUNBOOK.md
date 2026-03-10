@@ -68,8 +68,10 @@
   - まず `config-and-targets` job が ready=true になっているか確認する。
   - `config-and-targets` job の `targets` が空なら正常 skip。翌営業日条件に当たるか確認する。
   - `Prepare kernel build directory` の後に出る `script.py size_bytes=` と `run_config.json` の内容が想定どおりか確認する。
+  - `Poll kernel status` の `kernel_status_raw=` で CLI の生出力を確認する。
   - `kernel_status` が `failed/error/cancelled` の場合は Kaggle Notebook のログを確認する。
   - Kaggle schedule は停止し、Actions 側だけを実行源にする。
+  - Kaggle notebook log 側が成功で、Actions の poll だけ落ちている場合は監視コードの問題を疑う。
 
 ## Kaggle で file not found が出る
 - 症状: Kaggle ログで `data_collector.py` や `train_prob_model.py` が見つからない。
@@ -102,3 +104,4 @@
 - Kaggle script kernel では `script.py` 単体しか見えない前提に切り替え、allowlist を zip payload にして `script.py` へ埋め込む方式にした。
 - build dir にある `run_config.json` は workflow デバッグ用の見える化で、Kaggle 実行時は `script.py` 内の埋め込み payload から展開された `run_config.json` を使う。
 - 対象ロトだけを `run_config.json` で渡し、Kaggle ではその target だけ `data_collector.py` と `train_prob_model.py` を回すようにした。
+- `Poll kernel status` の不具合原因は Kaggle Python API メソッド名の typo で、`kernel_status` ではなく `kernels_status` だった。今回は typo 依存を避けるため、監視を CLI の `kaggle kernels status` ベースへ寄せた。
