@@ -29,6 +29,16 @@
   - Kaggle 利用時は同期をやり直す。
   - 評価だけ先に見たい場合は `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --skip_final_train` を使い、運用モデル更新は後で本実行する。
 
+## prediction history が無い
+- 症状: Streamlit の「✅ 実績との照合」で `prediction history が未生成です` と表示される。
+- 確認:
+  - `data/prediction_history_{loto_type}.json`
+  - `data/manifest_{loto_type}.json` の `prediction_history_rows`
+- 復旧:
+  - `python train_prob_model.py --loto_type loto6 --preset smoke --eval_epochs 0 --final_epochs 0`
+  - Kaggle 利用時は同期ボタンで最新 Output を取り直す。
+  - `update_system.py` を使う場合は成果物確認で `prediction_history_*.json` もチェックされる。
+
 ## 学習は通るが評価が不自然
 - 症状: static baseline より極端に良すぎる、または calibration が不自然。
 - 確認:
@@ -105,3 +115,4 @@
 - build dir にある `run_config.json` は workflow デバッグ用の見える化で、Kaggle 実行時は `script.py` 内の埋め込み payload から展開された `run_config.json` を使う。
 - 対象ロトだけを `run_config.json` で渡し、Kaggle ではその target だけ `data_collector.py` と `train_prob_model.py` を回すようにした。
 - `Poll kernel status` の不具合原因は Kaggle Python API メソッド名の typo で、`kernel_status` ではなく `kernels_status` だった。今回は typo 依存を避けるため、監視を CLI の `kaggle kernels status` ベースへ寄せた。
+- prediction history の正式な比較対象は `predicted_top_k` とし、サンプリング買い目履歴とは分離した。将来 live 予測を扱うときは `pending/resolved` の別 artifact に広げる前提にしている。

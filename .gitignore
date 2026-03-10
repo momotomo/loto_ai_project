@@ -4,6 +4,8 @@ __pycache__/
 kaggle_temp/
 data/eval_report_*.json
 data/manifest_*.json
+data/prediction_history_*.json
+data/prediction_history_*.csv
 data/*_feature_cols.json
 models/*_prob.keras
 models/*_scaler.pkl

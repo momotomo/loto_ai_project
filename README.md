@@ -1,6 +1,6 @@
 # loto_ai_project
 
-宝くじ予測の差は極小という前提で、LSTM による確率ベクトル出力と、信用できる時系列評価を重視するプロジェクトです。主な成果物は `eval_report_*.json`、`manifest_*.json`、`*_prob.keras`、`*_scaler.pkl` です。
+宝くじ予測の差は極小という前提で、LSTM による確率ベクトル出力と、信用できる時系列評価を重視するプロジェクトです。主な成果物は `eval_report_*.json`、`manifest_*.json`、`prediction_history_*.json`、`*_prob.keras`、`*_scaler.pkl` です。
 
 ## 主要コマンド
 - `python data_collector.py --loto_type loto6`
@@ -13,6 +13,9 @@
 
 ## Static / Online baseline の違い
 `static_baselines` は train 期間だけで作った予測を test 全体で固定比較する土俵です。`online_baselines` は test の実測を 1 ステップずつ取り込んで状態更新する参考値で、モデルの主比較対象ではありません。
+
+## 回別の予測照合
+`prediction_history_*.json` には holdout / walk-forward の各評価対象 draw ごとの予測上位番号と実当選番号の照合結果を保存します。Streamlit の「✅ 実績との照合」タブで、一致数の分布や回別の hit を確認できます。
 
 ## Docs
 - `AGENT.md`

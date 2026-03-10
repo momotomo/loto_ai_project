@@ -141,6 +141,74 @@ def calculate_metrics(preds, targets, k):
     }
 
 
+def target_vector_to_numbers(target_vector):
+    indices = np.flatnonzero(np.asarray(target_vector, dtype=np.float32) > 0.5)
+    return [int(index) + 1 for index in indices.tolist()]
+
+
+def build_prediction_history_records(
+    df,
+    preds,
+    targets,
+    loto_type,
+    pick_count,
+    max_num,
+    sample_start,
+    evaluation_mode,
+    fold_index=None,
+):
+    top_limit = min(10, max_num)
+    records = []
+
+    for offset, (pred_vector, target_vector) in enumerate(zip(preds, targets)):
+        sample_index = sample_start + offset
+        draw_row = df.iloc[LOOKBACK_WINDOW + sample_index]
+        ranked_indices = np.argsort(pred_vector)[::-1]
+        predicted_top_k = [int(index) + 1 for index in ranked_indices[:pick_count].tolist()]
+        actual_numbers = target_vector_to_numbers(target_vector)
+        hit_numbers = sorted(set(predicted_top_k) & set(actual_numbers))
+
+        records.append(
+            {
+                "draw_id": int(draw_row["draw_id"]),
+                "date": str(draw_row["date"]),
+                "loto_type": loto_type,
+                "evaluation_mode": evaluation_mode,
+                "fold_index": int(fold_index) if fold_index is not None else None,
+                "actual_numbers": actual_numbers,
+                "predicted_top_k": predicted_top_k,
+                "predicted_top_k_hit_count": len(hit_numbers),
+                "predicted_top_k_hit_numbers": hit_numbers,
+                "top_probability_numbers": [int(index) + 1 for index in ranked_indices[:top_limit].tolist()],
+                "top_probability_scores": [float(pred_vector[index]) for index in ranked_indices[:top_limit].tolist()],
+                "pick_count": int(pick_count),
+                "max_num": int(max_num),
+                "hit_rate_any": bool(hit_numbers),
+                "hit_rate_two_plus": len(hit_numbers) >= 2,
+            }
+        )
+
+    return records
+
+
+def build_prediction_history_artifact(loto_type, records):
+    sorted_records = sorted(
+        records,
+        key=lambda item: (
+            int(item["draw_id"]),
+            str(item["evaluation_mode"]),
+            -1 if item["fold_index"] is None else int(item["fold_index"]),
+        ),
+    )
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "loto_type": loto_type,
+        "record_count": len(sorted_records),
+        "records": sorted_records,
+    }
+
+
 def metrics_to_summary_entry(metrics):
     return {
         "fold_count": 1,
@@ -384,7 +452,21 @@ def build_samples_from_scaled_features(scaled_features, targets, sample_start, s
     return np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32)
 
 
-def evaluate_split(df, raw_features, targets, pick_count, max_num, train_end, test_end, epochs, batch_size, patience):
+def evaluate_split(
+    df,
+    raw_features,
+    targets,
+    loto_type,
+    pick_count,
+    max_num,
+    train_end,
+    test_end,
+    epochs,
+    batch_size,
+    patience,
+    evaluation_mode,
+    fold_index=None,
+):
     scaler = fit_scaler_for_split(raw_features, train_end)
     required_rows = LOOKBACK_WINDOW + test_end
     scaled_features = scaler.transform(raw_features[:required_rows])
@@ -396,6 +478,17 @@ def evaluate_split(df, raw_features, targets, pick_count, max_num, train_end, te
     preds_test = sanitize_probabilities(model(tf.convert_to_tensor(X_test), training=False).numpy())
     model_metrics = calculate_metrics(preds_test, y_test, pick_count)
     baseline_outputs = evaluate_baselines(y_train, y_test, max_num, pick_count)
+    history_records = build_prediction_history_records(
+        df=df,
+        preds=preds_test,
+        targets=y_test,
+        loto_type=loto_type,
+        pick_count=pick_count,
+        max_num=max_num,
+        sample_start=train_end,
+        evaluation_mode=evaluation_mode,
+        fold_index=fold_index,
+    )
 
     split_report = {
         "train_samples": int(len(y_train)),
@@ -407,14 +500,28 @@ def evaluate_split(df, raw_features, targets, pick_count, max_num, train_end, te
         "online_baselines": {name: payload["metrics"] for name, payload in baseline_outputs["online_baselines"].items()},
     }
 
-    return split_report, scaler, model, preds_test, y_test, baseline_outputs
+    return split_report, scaler, model, preds_test, y_test, baseline_outputs, history_records
 
 
-def evaluate_walk_forward(df, raw_features, targets, pick_count, max_num, initial_train_fraction, test_window, max_folds, epochs, batch_size, patience):
+def evaluate_walk_forward(
+    df,
+    raw_features,
+    targets,
+    loto_type,
+    pick_count,
+    max_num,
+    initial_train_fraction,
+    test_window,
+    max_folds,
+    epochs,
+    batch_size,
+    patience,
+):
     fold_starts = select_walk_forward_starts(len(targets), initial_train_fraction, test_window, max_folds)
     if not fold_starts:
         raise ValueError("walk-forward に必要な fold を作成できませんでした。")
     folds = []
+    history_records = []
 
     metrics_by_name = {"model": []}
     preds_by_name = {"model": []}
@@ -436,10 +543,11 @@ def evaluate_walk_forward(df, raw_features, targets, pick_count, max_num, initia
             f"    - fold {fold_index}/{len(fold_starts)}: "
             f"train_samples={train_end}, test_samples={test_end - train_end}"
         )
-        split_report, _, model, preds_test, y_test, baseline_outputs = evaluate_split(
+        split_report, _, model, preds_test, y_test, baseline_outputs, split_history_records = evaluate_split(
             df=df,
             raw_features=raw_features,
             targets=targets,
+            loto_type=loto_type,
             pick_count=pick_count,
             max_num=max_num,
             train_end=train_end,
@@ -447,9 +555,12 @@ def evaluate_walk_forward(df, raw_features, targets, pick_count, max_num, initia
             epochs=epochs,
             batch_size=batch_size,
             patience=patience,
+            evaluation_mode="walk_forward",
+            fold_index=fold_index,
         )
         split_report["fold"] = fold_index
         folds.append(split_report)
+        history_records.extend(split_history_records)
 
         metrics_by_name["model"].append(split_report["model"])
         preds_by_name["model"].append(preds_test)
@@ -487,16 +598,19 @@ def evaluate_walk_forward(df, raw_features, targets, pick_count, max_num, initia
             category_target_map[name] = targets_by_name[key]
         aggregate[category] = aggregate_named_reports(category_metric_map, category_pred_map, category_target_map, pick_count)
 
-    return {
-        "settings": {
-            "initial_train_fraction": initial_train_fraction,
-            "test_window": test_window,
-            "max_folds": max_folds,
-            "fold_selection_policy": "expanding-window rolling-origin, evenly sampled after the initial train period",
+    return (
+        {
+            "settings": {
+                "initial_train_fraction": initial_train_fraction,
+                "test_window": test_window,
+                "max_folds": max_folds,
+                "fold_selection_policy": "expanding-window rolling-origin, evenly sampled after the initial train period",
+            },
+            "folds": folds,
+            "aggregate": aggregate,
         },
-        "folds": folds,
-        "aggregate": aggregate,
-    }
+        history_records,
+    )
 
 
 def train_final_model(raw_features, targets, max_num, epochs, batch_size, patience):
@@ -602,7 +716,16 @@ def select_primary_evaluation(legacy_holdout, walk_forward_report):
     raise ValueError("manifest 生成には少なくとも1つの評価結果が必要です。")
 
 
-def build_manifest(loto_type, df, legacy_holdout, walk_forward_report, eval_report_path, final_artifact_status):
+def build_manifest(
+    loto_type,
+    df,
+    legacy_holdout,
+    walk_forward_report,
+    eval_report_path,
+    final_artifact_status,
+    prediction_history_path,
+    prediction_history_rows,
+):
     primary_evaluation = select_primary_evaluation(legacy_holdout, walk_forward_report)
     model_summary = primary_evaluation["model_summary"]
     static_summary = primary_evaluation["static_summary"]
@@ -645,10 +768,13 @@ def build_manifest(loto_type, df, legacy_holdout, walk_forward_report, eval_repo
         "metrics_summary": metrics_summary,
         "artifacts": {
             "eval_report": eval_report_path,
+            "prediction_history": prediction_history_path,
             "model": os.path.join(MODEL_DIR, f"{loto_type}_prob.keras"),
             "scaler": os.path.join(MODEL_DIR, f"{loto_type}_scaler.pkl"),
             "feature_cols": os.path.join(DATA_DIR, f"{loto_type}_feature_cols.json"),
         },
+        "prediction_history_path": prediction_history_path,
+        "prediction_history_rows": int(prediction_history_rows),
         "git_commit": get_git_commit(),
     }
 
@@ -684,16 +810,18 @@ def train_for_type(loto_type, args):
 
     print(f"\n--- {loto_type.upper()} 確率モデル学習 ＆ 信用度評価 ---")
     legacy_holdout = None
+    prediction_history_records = []
     if args.skip_legacy_holdout:
         print("  [1/4] legacy holdout をスキップします。")
     else:
         print("  [1/4] legacy holdout を計算中...")
         holdout_split = max(int(len(targets) * 0.8), args.walk_forward_test_window)
         holdout_split = min(holdout_split, len(targets) - args.walk_forward_test_window)
-        legacy_holdout, _, _, _, _, _ = evaluate_split(
+        legacy_holdout, _, _, _, _, _, legacy_history_records = evaluate_split(
             df=df,
             raw_features=raw_features,
             targets=targets,
+            loto_type=loto_type,
             pick_count=config["pick_count"],
             max_num=config["max_num"],
             train_end=holdout_split,
@@ -701,17 +829,20 @@ def train_for_type(loto_type, args):
             epochs=args.eval_epochs,
             batch_size=args.batch_size,
             patience=args.patience,
+            evaluation_mode="legacy_holdout",
         )
+        prediction_history_records.extend(legacy_history_records)
 
     walk_forward = None
     if args.skip_walk_forward:
         print("  [2/4] walk-forward をスキップします。")
     else:
         print("  [2/4] walk-forward を計算中...")
-        walk_forward = evaluate_walk_forward(
+        walk_forward, walk_forward_history_records = evaluate_walk_forward(
             df=df,
             raw_features=raw_features,
             targets=targets,
+            loto_type=loto_type,
             pick_count=config["pick_count"],
             max_num=config["max_num"],
             initial_train_fraction=args.initial_train_fraction,
@@ -721,6 +852,7 @@ def train_for_type(loto_type, args):
             batch_size=args.batch_size,
             patience=args.patience,
         )
+        prediction_history_records.extend(walk_forward_history_records)
 
     compat_model_metrics, compat_static_baselines, compat_online_baselines = build_compat_report_sections(
         legacy_holdout, walk_forward
@@ -750,6 +882,8 @@ def train_for_type(loto_type, args):
     }
     eval_report_path = os.path.join(DATA_DIR, f"eval_report_{loto_type}.json")
     save_json(eval_report_path, report)
+    prediction_history_path = os.path.join(DATA_DIR, f"prediction_history_{loto_type}.json")
+    save_json(prediction_history_path, build_prediction_history_artifact(loto_type, prediction_history_records))
 
     if args.skip_final_train:
         print("  [3/4] 本番用モデル学習をスキップし、既存成果物を再利用または雛形を保存します...")
@@ -775,6 +909,8 @@ def train_for_type(loto_type, args):
         walk_forward_report=walk_forward,
         eval_report_path=eval_report_path,
         final_artifact_status=final_artifact_status,
+        prediction_history_path=prediction_history_path,
+        prediction_history_rows=len(prediction_history_records),
     )
     save_json(os.path.join(DATA_DIR, f"manifest_{loto_type}.json"), manifest)
 
