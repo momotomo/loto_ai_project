@@ -14,6 +14,7 @@
 - `artifact_schema_version` / `bundle_id` を導入し、manifest / eval_report / prediction_history に bundle 世代情報を持たせた。
 - per-loto clean sync で、更新対象 loto_type は古いローカル artifact を削除してから新 bundle を一括配置するようにした。
 - Streamlit サイドバーに loto_type ごとのローカル artifact 削除ボタンを追加した。
+- Kaggle 実行後の artifact を `/kaggle/working/app/...` から root の `/kaggle/working/data` / `/kaggle/working/models` へ export するようにし、Streamlit 同期は root 優先・`app/` fallback で読むようにした。
 - `AGENT.md` と `docs/` を追加し、運用・評価・復旧手順を明文化した。
 
 ## 実装判断
@@ -27,3 +28,4 @@
 - Kaggle 同期は download 後に bundle を検査し、不完全なら local replace を始めない方針にした。partial sync による世代混在を避けるため。
 - ただし翌営業日の partial run では非対象 loto_type に `processed.csv` だけ残るので、bundle 検査も loto_type 単位に変更した。対象外はスキップ、対象だけ厳密更新とした。
 - schema version 変更直後は古い local artifact との混在が起きやすいので、manifest の `artifact_schema_version` / `bundle_id` を見て clean sync する方針にした。初回移行時は全 loto_type を一度揃える運用を推奨する。
+- Kaggle Output 側は path mismatch が起きやすいので、Output 直下の `data/` / `models/` を正とした。旧 Output との互換だけ Streamlit 側で吸収し、今後の運用は root export 前提に寄せる。

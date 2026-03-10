@@ -19,6 +19,7 @@
 - 復旧:
   - Notebook 側で学習を再実行し、Output が更新されたことを確認してから再同期する。
   - 翌営業日実行では対象 loto_type だけが学習対象なので、他 loto_type の `processed.csv` だけが残っていても即失敗ではない。
+  - Output の path mismatch が疑わしい場合は、`/kaggle/working/data` / `models` へ export 済みか確認する。移行期間は Streamlit 側で `app/data` / `app/models` fallback も読むが、root export が正。
 
 ## Streamlit の KeyError / 整合性エラー
 - 症状: 予測タブで `df[feature_cols]` 付近が落ちる、または整合性エラーが表示される。
@@ -121,10 +122,12 @@
 - GitHub Actions の翌営業日実行では、今回対象の loto_type だけ学習される。
 - そのため Kaggle Output に全 loto_type の完全 bundle が常にあるとは限らない。
 - Streamlit 同期は `kaggle_run_summary.json` → `run_config.json` → `manifest_*.json` の順で今回対象を推定し、loto_type ごとに完全 bundle を判定する。
+- artifact 探索は root の `data/...` / `models/...` を優先し、旧 Output 互換のため `app/data/...` / `app/models/...` も fallback で参照する。
 - bundle 判定は `manifest_{loto_type}.json` の `artifact_schema_version` / `bundle_id` と必須成果物の存在で行う。
 - 更新対象 loto_type では、配置前に古いローカル artifact を削除してから新 bundle を一括配置する。
 - UI 上の表示:
   - `更新: loto6`
+  - `loto6: bundle_id=... / source=root`
   - `スキップ: loto7（今回の実行対象外）`
   - `スキップ: miniloto（bundle 不完全）`
 - 復旧:
@@ -142,6 +145,7 @@
 - 復旧:
   - `scripts/kaggle_prepare_kernel_dir.py` の payload allowlist に必要ファイルが含まれているか見直す。
   - `scripts/kaggle_entry.py` が `/kaggle/working/app` へ payload を展開できているか確認する。
+  - 学習本体が通っているのに Streamlit 同期で artifact 不足になる場合は、`/kaggle/working/app/data` と `/kaggle/working/app/models` に生成された後、root の `/kaggle/working/data` と `/kaggle/working/models` に export されたか確認する。
   - `Missing extracted payload files:` が出ている場合は、そのファイルが zip payload に入っていない。
 
 ## 翌営業日ルールの確認
@@ -169,3 +173,4 @@
 - Kaggle 同期は一時ディレクトリへ全 artifact を集め、bundle が不完全ならローカル更新を中止するようにした。partial update で世代が混ざる事故を減らすため。
 - ただし翌営業日実行では非対象 loto_type の不完全 bundle が混ざるため、同期判定は global ではなく loto_type 単位に変えた。対象外はスキップ表示に留め、対象 loto_type だけ厳密に守る方針にした。
 - `artifact_schema_version` / `bundle_id` を manifest に入れ、clean sync はその bundle 単位で行うようにした。schema version 変更直後や初回移行時は `miniloto` / `loto6` / `loto7` を一度フル再学習して bundle を揃え、その後は partial update で運用する。
+- 今回の Kaggle 同期不具合は path mismatch が原因で、学習後の artifact が `/kaggle/working/app/...` にだけ残り root の `data/` / `models/` と噛み合っていなかった。運用上は root export を正とし、Streamlit 側は旧 Output 互換として `app/` 配下も fallback 参照する。

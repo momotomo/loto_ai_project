@@ -144,15 +144,41 @@ def classify_sync_destination(file_name):
     return []
 
 
+def normalize_sync_relative_path(relative_path):
+    return relative_path.replace("\\", "/")
+
+
+def detect_sync_source_variant(relative_path):
+    normalized = normalize_sync_relative_path(relative_path)
+    if "/" not in normalized:
+        return "root"
+    if normalized.startswith("data/") or normalized.startswith("models/"):
+        return "root"
+    if normalized.startswith("app/data/") or normalized.startswith("app/models/") or normalized.startswith("app/"):
+        return "app fallback"
+    return "other"
+
+
+def describe_source_variants(source_variants):
+    ordered = [variant for variant in ["root", "app fallback", "other"] if variant in source_variants]
+    if not ordered:
+        return "unknown"
+    if ordered == ["root"]:
+        return "root"
+    if ordered == ["app fallback"]:
+        return "app fallback"
+    if ordered == ["root", "app fallback"]:
+        return "mixed (root preferred)"
+    return ", ".join(ordered)
+
+
 def source_preference(file_name, relative_path):
-    normalized = relative_path.replace("\\", "/")
-    if file_name.endswith(".csv") and normalized.startswith("data/"):
+    source_variant = detect_sync_source_variant(relative_path)
+    if source_variant == "root":
         return 0
-    if file_name.endswith((".keras", ".pkl")) and normalized.startswith("models/"):
-        return 0
-    if file_name.endswith(".json") and normalized.startswith("data/"):
-        return 0
-    return 1
+    if source_variant == "app fallback":
+        return 1
+    return 2
 
 
 def build_sync_plan(download_dir):
@@ -170,6 +196,7 @@ def build_sync_plan(download_dir):
                 "file_name": file_name,
                 "source_path": source_path,
                 "relative_path": relative_path,
+                "source_variant": detect_sync_source_variant(relative_path),
                 "destinations": destinations,
             }
 
@@ -317,6 +344,10 @@ def evaluate_sync_plan(plan, selected_files):
         present_core = sorted(name for name in expected if name in downloaded_names)
         missing_core = sorted(expected - set(present_core))
         related_files = sorted(name for name in downloaded_names if file_belongs_to_loto(name, loto_type))
+        related_entries = [entry for entry in selected_files.values() if file_belongs_to_loto(entry["file_name"], loto_type)]
+        source_mode = describe_source_variants(
+            sorted({entry.get("source_variant") for entry in related_entries if entry.get("source_variant")})
+        )
         manifest = load_selected_json(selected_files, f"manifest_{loto_type}.json")
         manifest_error = validate_staged_manifest(manifest, loto_type) if manifest is not None else "manifest 欠落"
         manifest_bundle_id = manifest.get("bundle_id") if isinstance(manifest, dict) else None
@@ -326,12 +357,13 @@ def evaluate_sync_plan(plan, selected_files):
             "bundle_id": manifest_bundle_id,
             "generated_at": manifest_generated_at,
             "manifest_error": manifest_error,
+            "source_mode": source_mode,
         }
 
         if inferred_targets is not None:
             if loto_type in inferred_targets:
                 if not related_files:
-                    skipped.append((loto_type, "artifact 欠落", []))
+                    skipped.append((loto_type, "artifact 欠落", ["root / app fallback のどちらにも対象 artifact がありません"]))
                 elif manifest_error is None and not missing_core:
                     updated_loto_types.append(loto_type)
                 else:
@@ -379,6 +411,7 @@ def evaluate_sync_plan(plan, selected_files):
     if inference_source:
         lines.append(f"- target inference source: {inference_source}")
     lines.extend(summary_lines)
+    lines.append("- Kaggle Output 直下の data/models、または app/data・app/models に bundle があるか確認してください。")
     lines.append("- Kaggle 側の今回対象と artifact bundle を確認してください。")
     return {
         "ok": False,
@@ -1160,11 +1193,15 @@ with st.sidebar:
         for line in sync_notice.get("summary_lines", []):
             st.caption(line)
         for loto_type, bundle_info in (sync_notice.get("bundle_details") or {}).items():
+            caption_parts = []
             if bundle_info.get("bundle_id"):
-                st.caption(
-                    f"{loto_type}: bundle_id={bundle_info['bundle_id']} / "
-                    f"generated_at={bundle_info.get('generated_at', '-')}"
-                )
+                caption_parts.append(f"bundle_id={bundle_info['bundle_id']}")
+            if bundle_info.get("generated_at"):
+                caption_parts.append(f"generated_at={bundle_info.get('generated_at')}")
+            if bundle_info.get("source_mode") and bundle_info.get("source_mode") != "unknown":
+                caption_parts.append(f"source={bundle_info.get('source_mode')}")
+            if caption_parts:
+                st.caption(f"{loto_type}: {' / '.join(caption_parts)}")
         for line in sync_notice.get("manifest_lines", []):
             st.caption(line)
 

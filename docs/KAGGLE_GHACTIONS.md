@@ -31,7 +31,7 @@
 - `scripts/kaggle_entry.py` は runtime テンプレートとして使い、起動時に payload を `/kaggle/working/app` へ展開してから、そのディレクトリを `cwd` にして実行する。
 - `run_config.json` に入っている targets だけを順に処理し、各 target ごとに `data_collector.py --loto_type X` と `train_prob_model.py --loto_type X --preset fast --skip_legacy_holdout` を実行する。
 - 取得失敗時は build dir に同梱した `data/` を fallback として使い、学習を継続する。
-- 成果物は `/kaggle/working` 配下に残るので、Kaggle Output から同期できる。
+- 学習・推論で作られた成果物はまず `/kaggle/working/app/data` と `/kaggle/working/app/models` に置かれ、終了時に `/kaggle/working/data` と `/kaggle/working/models` へ export する。Streamlit 同期は root を正とし、移行期間だけ `app/` 配下も fallback で読む。
 - payload 展開方式にした理由は、Kaggle 側で `/kaggle/src` に `script.py` しか存在せず `data_collector.py` / `train_prob_model.py` が見つからない失敗を根本的に避けるため。
 
 ## 翌営業日判定
@@ -66,4 +66,5 @@
 - Kaggle で `file not found`:
   - workflow の `Debug build directory` ステップで `script.py` のサイズが極端に小さくないか、`run_config.json` が期待どおりか確認する。
   - Kaggle ログの `[kaggle-entry] listing for /kaggle/working/app` に、展開後の `data_collector.py` / `train_prob_model.py` / `run_config.json` が出ているか確認する。
+  - 学習完了後は `[kaggle-entry] export data:` / `[kaggle-entry] export models:` のログと、`/kaggle/working/data` / `/kaggle/working/models` の listing が出ているか確認する。
   - payload 展開先に必要ファイルが無い場合は `Missing extracted payload files:` のログに欠落ファイル名が出る。

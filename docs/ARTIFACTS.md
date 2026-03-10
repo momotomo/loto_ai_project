@@ -10,6 +10,7 @@
 - `models/*_prob.keras`: 本番推論用モデル。
 - `models/*_scaler.pkl`: 本番推論用 scaler。
 - `models/*_feature_cols.json`: CLI 互換のための複製。
+- Kaggle 実行中は一度 `/kaggle/working/app/data` と `/kaggle/working/app/models` に作られ、完了時に `/kaggle/working/data` と `/kaggle/working/models` へ export する。
 
 ## eval_report の要点
 - 旧キー: `Model (LSTM)`, `Baselines`, `Online Baselines`
@@ -60,3 +61,4 @@
 - Streamlit の予測タブは `processed.csv` / `feature_cols.json` / `scaler.pkl` / `model.keras` の世代が揃っている前提。Kaggle 同期ではこれらを一時ディレクトリにまとめて取得してから最後に入れ替える。
 - GitHub Actions の翌営業日実行では対象 loto_type だけ更新される。同期側も loto_type ごとに完全 bundle を判定し、完全な loto_type だけを部分更新する。
 - clean sync は manifest の `artifact_schema_version` / `bundle_id` を基準に行う。更新対象 loto_type では古いローカル bundle を先に削除してから新しい bundle を配置する。
+- Streamlit の Kaggle sync は root の `data/...` / `models/...` を優先し、旧 Output 互換のため `app/data/...` / `app/models/...` も fallback で参照する。
