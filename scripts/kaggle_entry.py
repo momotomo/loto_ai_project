@@ -13,6 +13,7 @@ from pathlib import Path
 PAYLOAD_BASE64 = """__KAGGLE_PAYLOAD_BASE64__"""
 UNSET_PAYLOAD = "__KAGGLE_PAYLOAD_BASE64__"
 DEFAULT_APP_DIR = Path(os.environ.get("KAGGLE_APP_DIR", "/kaggle/working/app"))
+ROOT_OUTPUT_DIR = Path("/kaggle/working")
 SUMMARY_PATH = Path("/kaggle/working/kaggle_run_summary.json")
 REQUIRED_PAYLOAD_FILES = (
     "config.py",
@@ -23,6 +24,19 @@ REQUIRED_PAYLOAD_FILES = (
     "run_config.json",
 )
 DEBUG_LISTING_LIMIT = 80
+DATA_EXPORT_PATTERNS = (
+    "*_processed.csv",
+    "*_raw.csv",
+    "manifest_*.json",
+    "eval_report_*.json",
+    "prediction_history_*.json",
+    "*_feature_cols.json",
+)
+MODEL_EXPORT_PATTERNS = (
+    "*_prob.keras",
+    "*_scaler.pkl",
+    "*_feature_cols.json",
+)
 
 
 def print_directory_listing(path):
@@ -85,6 +99,53 @@ def list_relative_files(path):
     if not path.exists():
         return []
     return sorted(item.relative_to(path).as_posix() for item in path.rglob("*") if item.is_file())
+
+
+def collect_matching_files(base_dir, patterns):
+    if not base_dir.exists():
+        return []
+
+    matched = {}
+    for pattern in patterns:
+        for path in sorted(base_dir.glob(pattern)):
+            if path.is_file():
+                matched[path.name] = path
+    return [matched[name] for name in sorted(matched)]
+
+
+def export_directory_subset(source_dir, destination_dir, patterns, label):
+    exported = []
+    destination_dir.mkdir(parents=True, exist_ok=True)
+
+    for source_path in collect_matching_files(source_dir, patterns):
+        destination_path = destination_dir / source_path.name
+        shutil.copy2(source_path, destination_path)
+        exported.append(source_path.name)
+        print(f"[kaggle-entry] export {label}: {source_path} -> {destination_path}", flush=True)
+
+    if not exported:
+        print(f"[kaggle-entry] export {label}: no matching files under {source_dir}", flush=True)
+    return exported
+
+
+def export_artifacts_to_output_root(app_dir, output_root=ROOT_OUTPUT_DIR):
+    source_data_dir = app_dir / "data"
+    source_model_dir = app_dir / "models"
+    output_data_dir = output_root / "data"
+    output_model_dir = output_root / "models"
+
+    exported_data_files = export_directory_subset(source_data_dir, output_data_dir, DATA_EXPORT_PATTERNS, "data")
+    exported_model_files = export_directory_subset(source_model_dir, output_model_dir, MODEL_EXPORT_PATTERNS, "models")
+
+    print_directory_listing(output_data_dir)
+    print_directory_listing(output_model_dir)
+    return {
+        "exported_to_root": True,
+        "exported_data_files": exported_data_files,
+        "exported_model_files": exported_model_files,
+        "root_data_files": list_relative_files(output_data_dir),
+        "root_model_files": list_relative_files(output_model_dir),
+    }
 
 
 def write_summary(summary):
@@ -150,8 +211,10 @@ def main():
                 exit_code = train_returncode
                 break
     finally:
+        export_summary = export_artifacts_to_output_root(app_dir)
         summary["data_files"] = list_relative_files(app_dir / "data")
         summary["model_files"] = list_relative_files(app_dir / "models")
+        summary.update(export_summary)
         write_summary(summary)
 
     if exit_code != 0:
