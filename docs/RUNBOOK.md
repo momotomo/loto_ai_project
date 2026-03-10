@@ -27,6 +27,7 @@
 - 復旧:
   - `python train_prob_model.py --loto_type loto6` を再実行する。
   - Kaggle 利用時は同期をやり直す。
+  - 評価だけ先に見たい場合は `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --skip_final_train` を使い、運用モデル更新は後で本実行する。
 
 ## 学習は通るが評価が不自然
 - 症状: static baseline より極端に良すぎる、または calibration が不自然。
@@ -34,8 +35,20 @@
   - scaler が train only fit になっているか
   - fold の train/test 境界が時系列順か
   - `walk_forward.aggregate` の平均と fold 個別成績が整合しているか
+  - leak-free 評価と final の全データ fit を混同していないか
 - 復旧:
   - `docs/EVALUATION.md` のリーク防止項目に沿って split 実装を見直す。
+
+## CPU が重くて回らない
+- 症状: ローカル無料 CPU で full 学習が長い。
+- 対処:
+  - `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke`
+  - `venv/bin/python train_prob_model.py --loto_type loto6 --preset fast`
+  - `venv/bin/python update_system.py --loto_type loto6 --train_preset smoke`
+- メモ:
+  - `legacy_holdout` / `walk_forward` は leak-free 評価。
+  - final model は運用用の全データ fit。
+  - `--skip_final_train` は既存運用成果物を再利用し、互換成果物が無い場合だけ 0-epoch の雛形を保存する。
 
 ## update_system 失敗
 - 症状: `update_system.py` 実行中に途中で停止する。

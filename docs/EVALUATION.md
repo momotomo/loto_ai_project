@@ -4,6 +4,8 @@
 - 評価対象は draw 単位の時系列サンプルで、各サンプルは直近 `LOOKBACK_WINDOW` 回を入力、次回 draw の multi-hot を正解とする。
 - `legacy_holdout` は従来互換の単発 split。
 - `walk_forward` は expanding-window 方式で train を広げ、固定長 test window を複数 fold で評価する。
+- `legacy_holdout` と `walk_forward` はどちらも leak-free 評価で、scaler は train 期間だけで fit する。
+- 一方で final model は運用モデル生成用なので、評価後に全データで fit し直して保存する。評価値と運用モデル生成は分離して考える。
 
 ## 指標
 - LogLoss (BCE): draw × number の二値確率損失。
@@ -26,3 +28,9 @@
 - test 期間は transform のみを使う。
 - calibration / overlap / baseline も fold ごとに算出し、最後に集計する。
 - online baseline は test 実測を使うが、予測後にのみ状態更新する。
+
+## preset の使い分け
+- 通常: `venv/bin/python train_prob_model.py --loto_type loto6`
+- 短時間確認: `venv/bin/python train_prob_model.py --loto_type loto6 --preset fast`
+- 最小 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke`
+- 評価だけ更新したい場合: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --skip_final_train`
