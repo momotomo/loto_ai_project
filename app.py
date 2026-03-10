@@ -2,7 +2,9 @@ import ast
 import json
 import os
 import pickle
+import re
 import shutil
+import tempfile
 import warnings
 from datetime import datetime
 
@@ -40,57 +42,230 @@ HISTORY_LIST_COLUMNS = [
     "top_probability_numbers",
     "top_probability_scores",
 ]
+KERNEL_REF_EXAMPLE = "username/my-loto-kernel"
+SYNC_NOTICE_STATE_KEY = "last_kaggle_sync_notice"
+SYNC_CORE_ARTIFACT_TEMPLATES = [
+    "{loto_type}_processed.csv",
+    "{loto_type}_feature_cols.json",
+    "{loto_type}_prob.keras",
+    "{loto_type}_scaler.pkl",
+]
 
 
-def replace_file(source_path, target_path, copy_only=False):
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-    if os.path.exists(target_path):
-        os.remove(target_path)
-    if copy_only:
-        shutil.copy2(source_path, target_path)
-    else:
-        shutil.move(source_path, target_path)
+def normalize_kernel_ref(value):
+    return (value or "").strip()
 
 
-def sync_from_kaggle(slug):
+def validate_kernel_ref(value):
+    kernel_ref = normalize_kernel_ref(value)
+    if kernel_ref.count("/") != 1:
+        return False, kernel_ref, f"Kernel Ref は `owner/kernel-slug` 形式で入力してください。例: `{KERNEL_REF_EXAMPLE}`"
+
+    owner, slug = [part.strip() for part in kernel_ref.split("/", 1)]
+    if not owner or not slug or any(" " in part for part in (owner, slug)):
+        return False, kernel_ref, f"Kernel Ref は `owner/kernel-slug` 形式で入力してください。例: `{KERNEL_REF_EXAMPLE}`"
+
+    return True, f"{owner}/{slug}", None
+
+
+def extract_http_status(exc):
+    for attr in ("status", "status_code"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+
+    match = re.search(r"\b(403|404|401)\b", str(exc))
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def build_kaggle_sync_error_message(kernel_ref, exc):
+    status = extract_http_status(exc)
+    example_line = f"例: {KERNEL_REF_EXAMPLE}"
+
+    if status == 403:
+        return (
+            "❌ Kaggle 同期に失敗しました (403 Forbidden)\n"
+            f"- Kernel Ref: {kernel_ref}\n"
+            "- `owner/kernel-slug` 形式か確認してください\n"
+            "- `KAGGLE_USERNAME` / `KAGGLE_KEY` がその kernel の所有者、または閲覧権限のあるアカウントか確認してください\n"
+            "- private kernel の場合は権限が必要です\n"
+            f"- {example_line}"
+        )
+
+    if status == 404:
+        return (
+            "❌ Kaggle 同期に失敗しました (404 Not Found)\n"
+            f"- Kernel Ref: {kernel_ref}\n"
+            "- Kernel Ref の owner / slug が正しいか確認してください\n"
+            "- slug 単体ではなく `owner/kernel-slug` を入力してください\n"
+            f"- {example_line}"
+        )
+
+    return (
+        "❌ Kaggle 同期エラー\n"
+        f"- Kernel Ref: {kernel_ref}\n"
+        f"- 詳細: {str(exc)}\n"
+        "- Kernel Ref、認証情報、Kaggle 側の Output 公開状態を確認してください"
+    )
+
+
+def classify_sync_destination(file_name):
+    if file_name.endswith(".csv"):
+        return [os.path.join("data", file_name)]
+    if file_name.endswith((".keras", ".pkl")):
+        return [os.path.join("models", file_name)]
+    if file_name.endswith(".json"):
+        destinations = [os.path.join("data", file_name)]
+        if file_name.endswith("_feature_cols.json"):
+            destinations.append(os.path.join("models", file_name))
+        return destinations
+    return []
+
+
+def source_preference(file_name, relative_path):
+    normalized = relative_path.replace("\\", "/")
+    if file_name.endswith(".csv") and normalized.startswith("data/"):
+        return 0
+    if file_name.endswith((".keras", ".pkl")) and normalized.startswith("models/"):
+        return 0
+    if file_name.endswith(".json") and normalized.startswith("data/"):
+        return 0
+    return 1
+
+
+def build_sync_plan(download_dir):
+    selected_files = {}
+
+    for root, _, files in os.walk(download_dir):
+        for file_name in files:
+            destinations = classify_sync_destination(file_name)
+            if not destinations:
+                continue
+
+            source_path = os.path.join(root, file_name)
+            relative_path = os.path.relpath(source_path, download_dir)
+            candidate = {
+                "file_name": file_name,
+                "source_path": source_path,
+                "relative_path": relative_path,
+                "destinations": destinations,
+            }
+
+            existing = selected_files.get(file_name)
+            if existing is None or source_preference(file_name, relative_path) < source_preference(
+                file_name, existing["relative_path"]
+            ):
+                selected_files[file_name] = candidate
+
+    plan = [selected_files[name] for name in sorted(selected_files.keys())]
+    return plan, selected_files
+
+
+def validate_sync_plan(plan):
+    downloaded_names = {item["file_name"] for item in plan}
+    incomplete_bundles = []
+
+    for loto_type in sorted(LOTO_CONFIG.keys()):
+        expected = {template.format(loto_type=loto_type) for template in SYNC_CORE_ARTIFACT_TEMPLATES}
+        present = sorted(name for name in expected if name in downloaded_names)
+        if present and len(present) != len(expected):
+            missing = sorted(expected - set(present))
+            incomplete_bundles.append((loto_type, present, missing))
+
+    if not incomplete_bundles:
+        return None
+
+    lines = ["❌ Kaggle Output に不完全な artifact bundle が含まれているため、ローカル更新を中止しました。"]
+    for loto_type, present, missing in incomplete_bundles:
+        lines.append(f"- {loto_type}: present={present}, missing={missing}")
+    lines.append("- Kaggle 側で学習を完了させてから再同期してください。")
+    return "\n".join(lines)
+
+
+def summarize_manifest_sources(selected_files):
+    summaries = []
+
+    for loto_type in sorted(LOTO_CONFIG.keys()):
+        manifest_file = f"manifest_{loto_type}.json"
+        manifest_entry = selected_files.get(manifest_file)
+        if not manifest_entry:
+            continue
+        try:
+            with open(manifest_entry["source_path"], "r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+        except Exception:
+            continue
+        summaries.append(
+            f"{loto_type}: generated_at={manifest.get('generated_at', '-')}, "
+            f"latest_draw_id={manifest.get('latest_draw_id', '-')}"
+        )
+
+    return summaries
+
+
+def apply_sync_plan(plan):
+    staging_dir = tempfile.mkdtemp(prefix="kaggle_sync_stage_")
+    staged_files = []
+
+    try:
+        for item in plan:
+            for destination in item["destinations"]:
+                staged_path = os.path.join(staging_dir, destination)
+                os.makedirs(os.path.dirname(staged_path), exist_ok=True)
+                shutil.copy2(item["source_path"], staged_path)
+                staged_files.append((staged_path, destination))
+
+        for staged_path, destination in staged_files:
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            os.replace(staged_path, destination)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def sync_from_kaggle(kernel_ref):
+    download_dir = tempfile.mkdtemp(prefix="kaggle_sync_download_")
     try:
         if not os.getenv("KAGGLE_USERNAME") or not os.getenv("KAGGLE_KEY"):
             if "KAGGLE_USERNAME" in st.secrets and "KAGGLE_KEY" in st.secrets:
                 os.environ["KAGGLE_USERNAME"] = st.secrets["KAGGLE_USERNAME"]
                 os.environ["KAGGLE_KEY"] = st.secrets["KAGGLE_KEY"]
             else:
-                return False, "❌ Kaggleの認証情報が見つかりません。"
+                return False, "❌ Kaggleの認証情報が見つかりません。", None
+
+        is_valid, normalized_ref, validation_message = validate_kernel_ref(kernel_ref)
+        if not is_valid:
+            return False, validation_message, None
 
         from kaggle.api.kaggle_api_extended import KaggleApi
 
         api = KaggleApi()
         api.authenticate()
+        api.kernels_output(normalized_ref, path=download_dir)
 
-        temp_dir = "kaggle_temp"
-        os.makedirs(temp_dir, exist_ok=True)
-        api.kernels_output(slug, path=temp_dir)
+        plan, selected_files = build_sync_plan(download_dir)
+        if not plan:
+            return False, "❌ Kaggle Output から同期対象 artifact を見つけられませんでした。", None
 
-        os.makedirs("data", exist_ok=True)
-        os.makedirs("models", exist_ok=True)
+        validation_error = validate_sync_plan(plan)
+        if validation_error:
+            return False, validation_error, None
 
-        for root, _, files in os.walk(temp_dir):
-            for file_name in files:
-                source_path = os.path.join(root, file_name)
-                if file_name.endswith(".csv"):
-                    replace_file(source_path, os.path.join("data", file_name))
-                elif file_name.endswith(".keras") or file_name.endswith(".pkl"):
-                    replace_file(source_path, os.path.join("models", file_name))
-                elif file_name.endswith(".json"):
-                    replace_file(source_path, os.path.join("data", file_name), copy_only=True)
-                    if file_name.endswith("_feature_cols.json"):
-                        replace_file(source_path, os.path.join("models", file_name))
-                    else:
-                        os.remove(source_path)
-
-        shutil.rmtree(temp_dir)
-        return True, "✅ Kaggleからの同期が完了しました。"
+        apply_sync_plan(plan)
+        summary = {
+            "kernel_ref": normalized_ref,
+            "file_count": len(plan),
+            "manifest_lines": summarize_manifest_sources(selected_files),
+        }
+        return True, "✅ Kaggleからの同期が完了しました。", summary
     except Exception as exc:
-        return False, f"❌ 同期エラー: {str(exc)}"
+        return False, build_kaggle_sync_error_message(kernel_ref, exc), None
+    finally:
+        shutil.rmtree(download_dir, ignore_errors=True)
 
 
 @st.cache_data(ttl=3600)
@@ -147,6 +322,129 @@ def load_eval_report(ltype):
 
 def load_manifest(ltype):
     return load_json_candidates(f"manifest_{ltype}.json")
+
+
+def get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler):
+    missing = []
+    if df is None:
+        missing.append(f"data/{loto_type}_processed.csv")
+    if feature_cols is None:
+        missing.append(f"data/{loto_type}_feature_cols.json or models/{loto_type}_feature_cols.json")
+    if model is None:
+        missing.append(f"models/{loto_type}_prob.keras")
+    if scaler is None:
+        missing.append(f"models/{loto_type}_scaler.pkl")
+    return missing
+
+
+def normalize_model_input_shape(model):
+    if model is None:
+        return None
+
+    input_shape = getattr(model, "input_shape", None)
+    if isinstance(input_shape, list):
+        input_shape = input_shape[0] if input_shape else None
+    if isinstance(input_shape, tuple):
+        return input_shape
+    return None
+
+
+def inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler):
+    issues = []
+
+    if df is None or feature_cols is None:
+        return issues
+
+    missing_cols = [column for column in feature_cols if column not in df.columns]
+    if missing_cols:
+        issues.append(
+            {
+                "kind": "missing_columns",
+                "message": "特徴量定義と processed.csv が不整合です。",
+                "missing_cols": missing_cols,
+                "csv_column_count": len(df.columns),
+                "feature_col_count": len(feature_cols),
+            }
+        )
+
+    scaler_feature_count = getattr(scaler, "n_features_in_", None) if scaler is not None else None
+    if scaler_feature_count is not None and scaler_feature_count != len(feature_cols):
+        issues.append(
+            {
+                "kind": "scaler_dimension_mismatch",
+                "message": "scaler の入力次元と feature_cols の長さが一致しません。",
+                "scaler_feature_count": int(scaler_feature_count),
+                "feature_col_count": len(feature_cols),
+            }
+        )
+
+    model_input_shape = normalize_model_input_shape(model)
+    if model_input_shape and len(model_input_shape) >= 3:
+        model_lookback = model_input_shape[1]
+        model_feature_count = model_input_shape[2]
+
+        if model_lookback is not None and int(model_lookback) != int(LOOKBACK_WINDOW):
+            issues.append(
+                {
+                    "kind": "model_lookback_mismatch",
+                    "message": "モデルの入力 lookback と現在の設定が一致しません。",
+                    "model_lookback": int(model_lookback),
+                    "expected_lookback": int(LOOKBACK_WINDOW),
+                }
+            )
+
+        if model_feature_count is not None and int(model_feature_count) != len(feature_cols):
+            issues.append(
+                {
+                    "kind": "model_feature_mismatch",
+                    "message": "モデル入力次元と feature_cols の長さが一致しません。",
+                    "model_feature_count": int(model_feature_count),
+                    "feature_col_count": len(feature_cols),
+                }
+            )
+
+    if len(df) < LOOKBACK_WINDOW:
+        issues.append(
+            {
+                "kind": "insufficient_rows",
+                "message": "processed.csv の行数が LOOKBACK_WINDOW より少ないため予測できません。",
+                "row_count": int(len(df)),
+                "expected_min_rows": int(LOOKBACK_WINDOW),
+            }
+        )
+
+    return issues
+
+
+def render_prediction_integrity_issues(loto_type, issues):
+    st.error(f"⚠️ {loto_type} の予測用 artifact に整合性エラーがあります。")
+    st.write("Kaggle 同期をやり直すか、古い artifact を削除して世代を揃えてください。")
+
+    for issue in issues:
+        st.write(f"- {issue['message']}")
+        if issue["kind"] == "missing_columns":
+            missing_cols = issue["missing_cols"]
+            st.write(f"  - 不足カラム数: {len(missing_cols)}")
+            st.write(f"  - 先頭不足カラム: {missing_cols[:10]}")
+            st.write(f"  - CSV 側カラム数: {issue['csv_column_count']}")
+            st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
+        elif issue["kind"] == "scaler_dimension_mismatch":
+            st.write(f"  - scaler 入力次元: {issue['scaler_feature_count']}")
+            st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
+        elif issue["kind"] == "model_lookback_mismatch":
+            st.write(f"  - model lookback: {issue['model_lookback']}")
+            st.write(f"  - expected lookback: {issue['expected_lookback']}")
+        elif issue["kind"] == "model_feature_mismatch":
+            st.write(f"  - model input feature 次元: {issue['model_feature_count']}")
+            st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
+        elif issue["kind"] == "insufficient_rows":
+            st.write(f"  - CSV 行数: {issue['row_count']}")
+            st.write(f"  - 必要最小行数: {issue['expected_min_rows']}")
+
+    st.info(
+        "対処案: Kaggle 同期の再実行、`feature_cols.json` / `processed.csv` / `scaler.pkl` / `model.keras` の再取得、"
+        "artifact 世代の揃え直しを実施してください。"
+    )
 
 
 def parse_history_list_cell(value):
@@ -354,6 +652,8 @@ def render_manifest_section(manifest):
             f"{manifest.get('prediction_history_rows')} rows "
             f"({manifest.get('prediction_history_path', '-')})"
         )
+    if manifest.get("generated_at"):
+        st.caption(f"generated_at={manifest.get('generated_at')}")
     st.caption(f"evaluation_source={evaluation_source}, final_artifact_status={final_artifact_status}")
 
     with st.expander("Manifest 詳細", expanded=False):
@@ -575,55 +875,26 @@ def render_prediction_history_section(loto_type):
     st.caption(f"top_probability_scores: {format_score_list(detail_row['top_probability_scores'])}")
 
 
-with st.sidebar:
-    st.header("☁️ Kaggle 同期設定")
-    default_slug = os.getenv("KAGGLE_SLUG", "")
-    if not default_slug and "KAGGLE_SLUG" in st.secrets:
-        default_slug = st.secrets["KAGGLE_SLUG"]
+def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols):
+    st.subheader("✨ 次回向けの確率予測と買い目生成")
 
-    k_slug = st.text_input("Notebook Slug", value=default_slug)
+    missing_artifacts = get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler)
+    if missing_artifacts:
+        st.error(f"⚠️ {loto_type} の予測用 artifact が不足しています。")
+        st.write("不足しているファイル:")
+        for path in missing_artifacts:
+            st.write(f"- {path}")
+        st.info("Kaggle 同期をやり直すか、学習を再実行して artifact 世代を揃えてください。")
+        st.stop()
 
-    if st.button("🔄 最新AIモデルを同期", use_container_width=True):
-        if k_slug:
-            with st.spinner("同期中..."):
-                success, message = sync_from_kaggle(k_slug)
-                if success:
-                    st.success(message)
-                    st.cache_data.clear()
-                    st.cache_resource.clear()
-                    st.rerun()
-                else:
-                    st.error(message)
-        else:
-            st.warning("Slugを入力してください。")
+    integrity_issues = inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler)
+    if integrity_issues:
+        render_prediction_integrity_issues(loto_type, integrity_issues)
+        st.stop()
 
-
-st.title("🎯 宝くじ AI確率予測システム")
-st.markdown("LSTMから出力された**出現確率ベクトル**に基づき、重み付きサンプリングで買い目を生成します。")
-st.markdown("---")
-
-selected_loto = st.radio(
-    "宝くじの種類",
-    options=list(LOTO_CONFIG.keys()),
-    format_func=lambda x: LOTO_CONFIG[x]["name"],
-    horizontal=True,
-)
-config = LOTO_CONFIG[selected_loto]
-
-df, model, scaler, feature_cols = load_assets(selected_loto)
-manifest = load_manifest(selected_loto)
-
-if df is None or feature_cols is None:
-    st.error("⚠️ 必要なファイルが不足しています。")
-    st.info("Kaggleの Output にモデルや JSON が存在するか確認し、サイドバーから同期し直してください。")
-    st.stop()
-
-tab1, tab2, tab3 = st.tabs(["🎲 確率サンプリング予測", "📊 モデル評価レポート (Walk-Forward)", "✅ 実績との照合"])
-
-with tab1:
     last_draw_id = int(df.iloc[-1]["draw_id"])
     last_draw_date = df.iloc[-1]["date"]
-    next_date, next_weekday = calculate_next_draw_date(selected_loto, last_draw_date)
+    next_date, next_weekday = calculate_next_draw_date(loto_type, last_draw_date)
 
     col_info1, col_info2 = st.columns(2)
     with col_info1:
@@ -632,8 +903,7 @@ with tab1:
         st.success(f"🗓️ **次回抽選:** {next_date} ({next_weekday})")
 
     st.markdown("---")
-    st.subheader(f"✨ 次回（第{last_draw_id + 1}回）向けの確率予測と買い目生成")
-
+    st.write(f"対象 loto_type: `{loto_type}`")
     features_df = df[feature_cols]
     scaled_data = scaler.transform(features_df)
     recent_input = np.array([scaled_data[-LOOKBACK_WINDOW:]], dtype=np.float32)
@@ -673,6 +943,63 @@ with tab1:
                     unsafe_allow_html=True,
                 )
 
+
+with st.sidebar:
+    st.header("☁️ Kaggle 同期設定")
+    sync_notice = st.session_state.pop(SYNC_NOTICE_STATE_KEY, None)
+    if sync_notice:
+        st.success(sync_notice["message"])
+        for line in sync_notice.get("manifest_lines", []):
+            st.caption(line)
+
+    default_kernel_ref = os.getenv("KAGGLE_SLUG", "")
+    if not default_kernel_ref and "KAGGLE_SLUG" in st.secrets:
+        default_kernel_ref = st.secrets["KAGGLE_SLUG"]
+
+    kernel_ref_input = st.text_input("Kernel Ref (owner/kernel-slug)", value=default_kernel_ref, help=f"例: {KERNEL_REF_EXAMPLE}")
+    st.caption(f"例: `{KERNEL_REF_EXAMPLE}`")
+    st.caption("slug 単体ではなく owner を含む `owner/kernel-slug` 形式が必要です。")
+
+    if st.button("🔄 最新AIモデルを同期", use_container_width=True):
+        normalized_input = normalize_kernel_ref(kernel_ref_input)
+        if not normalized_input:
+            st.warning("Kernel Ref を入力してください。")
+        else:
+            is_valid_ref, normalized_ref, validation_message = validate_kernel_ref(normalized_input)
+            if not is_valid_ref:
+                st.error(validation_message)
+            else:
+                with st.spinner("同期中..."):
+                    success, message, sync_summary = sync_from_kaggle(normalized_ref)
+                    if success:
+                        st.session_state[SYNC_NOTICE_STATE_KEY] = {
+                            "message": message + f" Kernel Ref: {normalized_ref} / files={((sync_summary or {}).get('file_count', '-'))}",
+                            "manifest_lines": (sync_summary or {}).get("manifest_lines", []),
+                        }
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                        st.rerun()
+                    else:
+                        st.error(message)
+
+
+st.title("🎯 宝くじ AI確率予測システム")
+st.markdown("LSTMから出力された**出現確率ベクトル**に基づき、重み付きサンプリングで買い目を生成します。")
+st.markdown("---")
+
+selected_loto = st.radio(
+    "宝くじの種類",
+    options=list(LOTO_CONFIG.keys()),
+    format_func=lambda x: LOTO_CONFIG[x]["name"],
+    horizontal=True,
+)
+config = LOTO_CONFIG[selected_loto]
+
+df, model, scaler, feature_cols = load_assets(selected_loto)
+manifest = load_manifest(selected_loto)
+
+tab1, tab2, tab3 = st.tabs(["🎲 確率サンプリング予測", "📊 モデル評価レポート (Walk-Forward)", "✅ 実績との照合"])
+
 with tab2:
     report = load_eval_report(selected_loto)
     render_manifest_section(manifest)
@@ -686,3 +1013,6 @@ with tab2:
 
 with tab3:
     render_prediction_history_section(selected_loto)
+
+with tab1:
+    render_prediction_tab(selected_loto, config, df, model, scaler, feature_cols)

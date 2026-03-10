@@ -17,6 +17,11 @@
 ## 回別の予測照合
 `prediction_history_*.json` には holdout / walk-forward の各評価対象 draw ごとの予測上位番号と実当選番号の照合結果を保存します。Streamlit の「✅ 実績との照合」タブで、一致数の分布や回別の hit を確認できます。
 
+## Streamlit 運用メモ
+- Kaggle 同期欄の入力は `Kernel Ref (owner/kernel-slug)` 形式です。例: `username/my-loto-kernel`
+- `processed.csv` と `feature_cols.json` / `scaler.pkl` / `model.keras` の世代がずれると、予測タブは整合性エラーで停止します。
+- その場合でも評価タブと実績照合タブは見られるようにしているので、manifest や prediction history を先に確認できます。
+
 ## Docs
 - `AGENT.md`
 - `docs/ARCHITECTURE.md`
