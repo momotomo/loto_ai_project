@@ -3,16 +3,10 @@ name: Kaggle Kick
 on:
   workflow_dispatch:
     inputs:
-      loto_type:
-        description: "対象の宝くじ種類。all は全種類"
+      today_jst:
+        description: "翌営業日判定の JST 日付を上書きする (YYYY-MM-DD)"
         required: false
-        default: all
-        type: choice
-        options:
-          - all
-          - miniloto
-          - loto6
-          - loto7
+        type: string
       train_preset:
         description: "Kaggle 上で使う train_prob_model preset"
         required: false
@@ -23,29 +17,32 @@ on:
           - fast
           - smoke
   schedule:
-    - cron: "15 15 * * *"
+    - cron: "10 0 * * 1-5"
 
 jobs:
-  config-check:
+  config-and-targets:
     runs-on: ubuntu-latest
     outputs:
       ready: ${{ steps.check.outputs.ready }}
       kernel_id: ${{ steps.check.outputs.kernel_id }}
-      loto_type: ${{ steps.options.outputs.loto_type }}
-      train_preset: ${{ steps.options.outputs.train_preset }}
+      train_preset: ${{ steps.inputs.outputs.train_preset }}
+      targets_csv: ${{ steps.targets.outputs.targets_csv }}
+      targets_count: ${{ steps.targets.outputs.targets_count }}
+      has_targets: ${{ steps.targets.outputs.has_targets }}
+      today_jst: ${{ steps.targets.outputs.today_jst }}
     steps:
-      - id: options
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - id: inputs
         shell: bash
         run: |
-          loto_type="${{ github.event.inputs.loto_type }}"
           train_preset="${{ github.event.inputs.train_preset }}"
-
-          if [[ -z "$loto_type" || "$loto_type" == "all" ]]; then
-            echo "loto_type=" >> "$GITHUB_OUTPUT"
-          else
-            echo "loto_type=$loto_type" >> "$GITHUB_OUTPUT"
-          fi
-
           if [[ -z "$train_preset" ]]; then
             train_preset="fast"
           fi
@@ -60,23 +57,54 @@ jobs:
           echo "kernel_id=$KAGGLE_KERNEL_ID" >> "$GITHUB_OUTPUT"
           if [[ -n "$KAGGLE_JSON" && -n "$KAGGLE_KERNEL_ID" ]]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
-            echo "Kaggle secrets/vars detected. Kick job will run."
+            echo "Kaggle secrets/vars detected."
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "Kaggle secrets/vars are missing. Workflow will skip the kick job and succeed."
           fi
 
+      - id: targets
+        shell: bash
+        run: |
+          today_arg=()
+          if [[ -n "${{ github.event.inputs.today_jst }}" ]]; then
+            today_arg=(--today "${{ github.event.inputs.today_jst }}")
+          fi
+
+          python scripts/compute_kick_targets.py "${today_arg[@]}" --output "$RUNNER_TEMP/kick_targets.json"
+
+          python - "$RUNNER_TEMP/kick_targets.json" <<'PY'
+          import json
+          import sys
+
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as handle:
+              payload = json.load(handle)
+
+          targets = payload.get("targets", [])
+          print(f"today_jst={payload['today']}")
+          print(f"targets={targets}")
+
+          with open("targets_output.txt", "w", encoding="utf-8") as out:
+              out.write(f"today_jst={payload['today']}\n")
+              out.write(f"targets_csv={','.join(targets)}\n")
+              out.write(f"targets_count={len(targets)}\n")
+              out.write(f"has_targets={'true' if targets else 'false'}\n")
+          PY
+
+          cat targets_output.txt >> "$GITHUB_OUTPUT"
+
   kaggle-kick:
-    needs: config-check
-    if: needs.config-check.outputs.ready == 'true'
+    needs: config-and-targets
+    if: needs.config-and-targets.outputs.ready == 'true' && needs.config-and-targets.outputs.has_targets == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
       KAGGLE_JSON: ${{ secrets.KAGGLE_JSON }}
-      KAGGLE_KERNEL_ID: ${{ needs.config-check.outputs.kernel_id }}
+      KAGGLE_KERNEL_ID: ${{ needs.config-and-targets.outputs.kernel_id }}
       KAGGLE_KERNEL_TITLE: ${{ vars.KAGGLE_KERNEL_TITLE }}
-      LOTO_TYPE: ${{ needs.config-check.outputs.loto_type }}
-      LOTO_TRAIN_PRESET: ${{ needs.config-check.outputs.train_preset }}
+      LOTO_TRAIN_PRESET: ${{ needs.config-and-targets.outputs.train_preset }}
+      TARGETS_CSV: ${{ needs.config-and-targets.outputs.targets_csv }}
       KAGGLE_STATUS_TIMEOUT_SECONDS: "7200"
       KAGGLE_STATUS_POLL_SECONDS: "30"
     steps:
@@ -101,6 +129,7 @@ jobs:
       - name: Prepare kernel build directory
         shell: bash
         run: |
+          IFS=',' read -r -a targets <<< "$TARGETS_CSV"
           title_args=()
           if [[ -n "$KAGGLE_KERNEL_TITLE" ]]; then
             title_args+=(--kernel-title "$KAGGLE_KERNEL_TITLE")
@@ -110,7 +139,16 @@ jobs:
             --repo-root . \
             --build-dir "$RUNNER_TEMP/kaggle-kernel" \
             --kernel-id "$KAGGLE_KERNEL_ID" \
+            --train-preset "$LOTO_TRAIN_PRESET" \
+            --skip-legacy-holdout \
+            --targets "${targets[@]}" \
             "${title_args[@]}"
+
+      - name: Debug build directory
+        shell: bash
+        run: |
+          echo "kick_targets=$TARGETS_CSV"
+          find "$RUNNER_TEMP/kaggle-kernel" -maxdepth 2 -type f | sort
 
       - name: Push kernel to Kaggle
         run: kaggle kernels push -p "$RUNNER_TEMP/kaggle-kernel"

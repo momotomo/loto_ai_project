@@ -63,7 +63,36 @@
   - Variable `KAGGLE_KERNEL_ID`
   - Kaggle Notebook の Internet 設定
   - `docs/KAGGLE_GHACTIONS.md` の cron / setup 手順
+  - `scripts/compute_kick_targets.py` が出した `targets` が想定どおりか
 - 復旧:
-  - まず `config-check` job が ready=true になっているか確認する。
+  - まず `config-and-targets` job が ready=true になっているか確認する。
+  - `config-and-targets` job の `targets` が空なら正常 skip。翌営業日条件に当たるか確認する。
   - `kernel_status` が `failed/error/cancelled` の場合は Kaggle Notebook のログを確認する。
   - Kaggle schedule は停止し、Actions 側だけを実行源にする。
+
+## 翌営業日ルールの確認
+- 祝日判定は内閣府 CSV `https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv` を使う。
+- 営業日は平日かつ祝日でない日。
+- 平常時の対象:
+  - 月曜: `loto7`
+  - 火曜: `loto6`
+  - 水曜: `miniloto`
+  - 金曜: `loto6`
+- 祝日がある週は、抽せん日の翌営業日まで後ろ倒しになる。
+- ローカル確認例:
+  - `python scripts/compute_kick_targets.py --today 2026-03-11`
+
+## Kaggle で file not found が出る
+- 症状: Kaggle ログで `data_collector.py` や `train_prob_model.py` が見つからない。
+- 確認:
+  - workflow の `Debug build directory` ステップに対象ファイルが出ているか
+  - `kernel-metadata.json` の `code_file` が `kaggle_entry.py` を指しているか
+  - Kaggle ログの `[kaggle-entry] debug listing` で推定 repo root の中身が見えているか
+- 復旧:
+  - `scripts/kaggle_prepare_kernel_dir.py` の allowlist に必要ファイルが含まれているか見直す。
+  - `scripts/kaggle_entry.py` の root 探索先に `repo_root` と `repo_root/src` の両方が入っているか確認する。
+
+## 今回の実装判断
+- GitHub Actions の schedule は広めに「平日朝」で起動し、実際に kick するかは `compute_kick_targets.py` 側で決めるようにした。
+- Kaggle 側 path は `/kaggle/src` の固定値をやめ、`__file__` と `cwd` から root を探索する方式にした。
+- 対象ロトだけを `run_config.json` で渡し、Kaggle ではその target だけ `data_collector.py` と `train_prob_model.py` を回すようにした。
