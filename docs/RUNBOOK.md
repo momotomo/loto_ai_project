@@ -55,3 +55,15 @@
 - 復旧:
   - 失敗したステップのスクリプトを単体で実行する。
   - `data_collector.py` → `train_prob_model.py` → `predict.py` の順で個別に確認する。
+
+## GitHub Actions からの Kaggle kick 失敗
+- 症状: `.github/workflows/kaggle_kick.yml` が skip 以外で失敗する。
+- 確認:
+  - Secret `KAGGLE_JSON`
+  - Variable `KAGGLE_KERNEL_ID`
+  - Kaggle Notebook の Internet 設定
+  - `docs/KAGGLE_GHACTIONS.md` の cron / setup 手順
+- 復旧:
+  - まず `config-check` job が ready=true になっているか確認する。
+  - `kernel_status` が `failed/error/cancelled` の場合は Kaggle Notebook のログを確認する。
+  - Kaggle schedule は停止し、Actions 側だけを実行源にする。
