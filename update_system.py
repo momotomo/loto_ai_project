@@ -46,10 +46,13 @@ def verify_artifacts(loto_type=None):
     for current_loto_type in loto_types:
         eval_report_path = os.path.join("data", f"eval_report_{current_loto_type}.json")
         manifest_path = os.path.join("data", f"manifest_{current_loto_type}.json")
+        prediction_history_path = os.path.join("data", f"prediction_history_{current_loto_type}.json")
         if not os.path.exists(eval_report_path):
             missing.append(eval_report_path)
         if not os.path.exists(manifest_path):
             missing.append(manifest_path)
+        if not os.path.exists(prediction_history_path):
+            missing.append(prediction_history_path)
 
     if missing:
         print("❌ 学習完了後の成果物が不足しています。")
@@ -85,6 +88,7 @@ def main():
     print("\n=======================================================")
     print(" ✅ 全ての処理が正常に完了しました。")
     print(" 評価結果は data/eval_report_*.json、manifest は data/manifest_*.json を確認してください。")
+    print(" 回別照合用の履歴は data/prediction_history_*.json を確認してください。")
     print(" UI を使う場合は `streamlit run app.py` を実行してください。")
     print("=======================================================\n")
 
