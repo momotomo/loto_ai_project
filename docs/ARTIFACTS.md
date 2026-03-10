@@ -5,6 +5,7 @@
 - `data/*_processed.csv`: 特徴量追加後の学習入力。
 - `data/eval_report_{loto_type}.json`: 評価レポート。`legacy_holdout` と `walk_forward` を含む。
 - `data/manifest_{loto_type}.json`: 生成日時、学習レンジ、最新 draw、指標要約、git commit。
+- `data/prediction_history_{loto_type}.json`: 評価対象 draw ごとの予測上位番号と実当選番号の照合履歴。
 - `data/*_feature_cols.json`: 学習時の特徴量列順。
 - `models/*_prob.keras`: 本番推論用モデル。
 - `models/*_scaler.pkl`: 本番推論用 scaler。
@@ -25,8 +26,28 @@
 - `train_range`
 - `metrics_summary`
 - `artifacts`
+- `prediction_history_path`
+- `prediction_history_rows`
 - `git_commit`
+
+## prediction_history の要点
+- `schema_version`
+- `generated_at`
+- `loto_type`
+- `record_count`
+- `records[]`
+  - `draw_id`, `date`, `evaluation_mode`, `fold_index`
+  - `actual_numbers`
+  - `predicted_top_k`
+  - `predicted_top_k_hit_count`
+  - `predicted_top_k_hit_numbers`
+  - `top_probability_numbers`
+  - `top_probability_scores`
+  - `pick_count`, `max_num`
+  - `hit_rate_any`, `hit_rate_two_plus`
 
 ## 運用メモ
 - `eval_report` と `manifest` は軽量なので UI / Kaggle 同期の主対象。
+- `prediction_history` は集計指標の根拠を draw 単位で見返すための artifact。Streamlit の「✅ 実績との照合」タブが主な参照先。
+- live 予測履歴は今回は保存しないが、将来は `pending/resolved` の 2 段階で別 artifact に拡張できるよう JSON 形式を分離している。
 - モデル本体と scaler は再生成可能だが、UI 起動には必要。
