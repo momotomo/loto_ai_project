@@ -14,9 +14,25 @@
 - 症状: Streamlit の同期ボタンで認証または取得エラーになる。
 - 確認:
   - `KAGGLE_USERNAME`, `KAGGLE_KEY`, `KAGGLE_SLUG`
+  - 入力欄の `Kernel Ref (owner/kernel-slug)`
   - Notebook Output に `eval_report_*.json` / `manifest_*.json` / `*_prob.keras` があるか
 - 復旧:
   - Notebook 側で学習を再実行し、Output が更新されたことを確認してから再同期する。
+
+## Streamlit の KeyError / 整合性エラー
+- 症状: 予測タブで `df[feature_cols]` 付近が落ちる、または整合性エラーが表示される。
+- 主な原因:
+  - `processed.csv` と `feature_cols.json` の世代不一致
+  - 同期失敗後に古い `scaler.pkl` / `model.keras` が残っている
+  - Kaggle 同期で一部 artifact だけ古いまま混在している
+- UI 上で見る場所:
+  - 予測タブのエラーブロック
+  - 評価タブの manifest 表示
+  - サイドバー同期欄の最後の同期メッセージ
+- 復旧:
+  - Kaggle 同期を再実行する
+  - 必要に応じて `feature_cols.json` / `processed.csv` / `scaler.pkl` / `model.keras` を削除して再取得する
+  - prediction tab は安全停止するが、評価タブと実績照合タブはそのまま確認してよい
 
 ## モデル読み込み失敗
 - 症状: `app.py` または `predict.py` で必要ファイル不足と表示される。
@@ -83,6 +99,21 @@
   - Kaggle schedule は停止し、Actions 側だけを実行源にする。
   - Kaggle notebook log 側が成功で、Actions の poll だけ落ちている場合は監視コードの問題を疑う。
 
+## Kaggle 403 / 404 の切り分け
+- 症状: Streamlit の Kaggle 同期で 403 または 404 が出る。
+- 主な原因:
+  - Kernel Ref が `owner/kernel-slug` ではなく slug 単体になっている
+  - `KAGGLE_USERNAME` / `KAGGLE_KEY` に、その kernel を読める権限がない
+  - private kernel に対して別アカウントの token を使っている
+- UI 上で見る場所:
+  - サイドバーの `Kernel Ref (owner/kernel-slug)` 入力欄
+  - 同期失敗時のエラーメッセージ
+- 復旧:
+  - Kernel Ref を確認する。例: `username/my-loto-kernel`
+  - Streamlit secrets の `KAGGLE_USERNAME` / `KAGGLE_KEY` を確認する
+  - private kernel なら所有者アカウント、または権限付きアカウントの token に切り替える
+  - 404 の場合は owner / slug の typo を疑う
+
 ## Kaggle で file not found が出る
 - 症状: Kaggle ログで `data_collector.py` や `train_prob_model.py` が見つからない。
 - 確認:
@@ -116,3 +147,5 @@
 - 対象ロトだけを `run_config.json` で渡し、Kaggle ではその target だけ `data_collector.py` と `train_prob_model.py` を回すようにした。
 - `Poll kernel status` の不具合原因は Kaggle Python API メソッド名の typo で、`kernel_status` ではなく `kernels_status` だった。今回は typo 依存を避けるため、監視を CLI の `kaggle kernels status` ベースへ寄せた。
 - prediction history の正式な比較対象は `predicted_top_k` とし、サンプリング買い目履歴とは分離した。将来 live 予測を扱うときは `pending/resolved` の別 artifact に広げる前提にしている。
+- Streamlit の整合性エラー時は app 全体を落とさず、予測タブだけ安全停止して評価タブと実績照合タブを残すようにした。artifact 世代の切り分けを UI 上で継続できる方を優先した。
+- Kaggle 同期は一時ディレクトリへ全 artifact を集め、bundle が不完全ならローカル更新を中止するようにした。partial update で世代が混ざる事故を減らすため。
