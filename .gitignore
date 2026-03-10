@@ -1,2 +1,10 @@
 venv/
 .DS_Store
+__pycache__/
+kaggle_temp/
+data/eval_report_*.json
+data/manifest_*.json
+data/*_feature_cols.json
+models/*_prob.keras
+models/*_scaler.pkl
+models/*_feature_cols.json
