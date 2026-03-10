@@ -22,3 +22,4 @@
 - `docs/ARTIFACTS.md`
 - `docs/RUNBOOK.md`
 - `docs/PR_SUMMARY.md`
+- `docs/KAGGLE_GHACTIONS.md`

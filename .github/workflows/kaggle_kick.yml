@@ -1,0 +1,152 @@
+name: Kaggle Kick
+
+on:
+  workflow_dispatch:
+    inputs:
+      loto_type:
+        description: "対象の宝くじ種類。all は全種類"
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - miniloto
+          - loto6
+          - loto7
+      train_preset:
+        description: "Kaggle 上で使う train_prob_model preset"
+        required: false
+        default: fast
+        type: choice
+        options:
+          - default
+          - fast
+          - smoke
+  schedule:
+    - cron: "15 15 * * *"
+
+jobs:
+  config-check:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+      kernel_id: ${{ steps.check.outputs.kernel_id }}
+      loto_type: ${{ steps.options.outputs.loto_type }}
+      train_preset: ${{ steps.options.outputs.train_preset }}
+    steps:
+      - id: options
+        shell: bash
+        run: |
+          loto_type="${{ github.event.inputs.loto_type }}"
+          train_preset="${{ github.event.inputs.train_preset }}"
+
+          if [[ -z "$loto_type" || "$loto_type" == "all" ]]; then
+            echo "loto_type=" >> "$GITHUB_OUTPUT"
+          else
+            echo "loto_type=$loto_type" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [[ -z "$train_preset" ]]; then
+            train_preset="fast"
+          fi
+          echo "train_preset=$train_preset" >> "$GITHUB_OUTPUT"
+
+      - id: check
+        env:
+          KAGGLE_JSON: ${{ secrets.KAGGLE_JSON }}
+          KAGGLE_KERNEL_ID: ${{ vars.KAGGLE_KERNEL_ID }}
+        shell: bash
+        run: |
+          echo "kernel_id=$KAGGLE_KERNEL_ID" >> "$GITHUB_OUTPUT"
+          if [[ -n "$KAGGLE_JSON" && -n "$KAGGLE_KERNEL_ID" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "Kaggle secrets/vars detected. Kick job will run."
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Kaggle secrets/vars are missing. Workflow will skip the kick job and succeed."
+          fi
+
+  kaggle-kick:
+    needs: config-check
+    if: needs.config-check.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      KAGGLE_JSON: ${{ secrets.KAGGLE_JSON }}
+      KAGGLE_KERNEL_ID: ${{ needs.config-check.outputs.kernel_id }}
+      KAGGLE_KERNEL_TITLE: ${{ vars.KAGGLE_KERNEL_TITLE }}
+      LOTO_TYPE: ${{ needs.config-check.outputs.loto_type }}
+      LOTO_TRAIN_PRESET: ${{ needs.config-check.outputs.train_preset }}
+      KAGGLE_STATUS_TIMEOUT_SECONDS: "7200"
+      KAGGLE_STATUS_POLL_SECONDS: "30"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Kaggle CLI
+        run: python -m pip install --upgrade pip kaggle
+
+      - name: Configure Kaggle credentials
+        shell: bash
+        run: |
+          mkdir -p ~/.kaggle
+          printf '%s' "$KAGGLE_JSON" > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+
+      - name: Prepare kernel build directory
+        shell: bash
+        run: |
+          title_args=()
+          if [[ -n "$KAGGLE_KERNEL_TITLE" ]]; then
+            title_args+=(--kernel-title "$KAGGLE_KERNEL_TITLE")
+          fi
+
+          python scripts/kaggle_prepare_kernel_dir.py \
+            --repo-root . \
+            --build-dir "$RUNNER_TEMP/kaggle-kernel" \
+            --kernel-id "$KAGGLE_KERNEL_ID" \
+            "${title_args[@]}"
+
+      - name: Push kernel to Kaggle
+        run: kaggle kernels push -p "$RUNNER_TEMP/kaggle-kernel"
+
+      - name: Poll kernel status
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import time
+          from kaggle.api.kaggle_api_extended import KaggleApi
+
+          kernel_id = os.environ["KAGGLE_KERNEL_ID"]
+          timeout_seconds = int(os.environ.get("KAGGLE_STATUS_TIMEOUT_SECONDS", "7200"))
+          poll_seconds = int(os.environ.get("KAGGLE_STATUS_POLL_SECONDS", "30"))
+          deadline = time.time() + timeout_seconds
+
+          api = KaggleApi()
+          api.authenticate()
+
+          last_status = None
+          success_states = {"complete"}
+          failure_states = {"failed", "error", "cancelled"}
+
+          while time.time() < deadline:
+              status = str(api.kernel_status(kernel_id)).lower()
+              if status != last_status:
+                  print(f"kernel_status={status}", flush=True)
+                  last_status = status
+
+              if status in success_states:
+                  sys.exit(0)
+              if status in failure_states:
+                  raise SystemExit(f"Kaggle kernel finished with status={status}")
+
+              time.sleep(poll_seconds)
+
+          raise SystemExit(f"Timed out waiting for Kaggle kernel: {kernel_id}")
+          PY
