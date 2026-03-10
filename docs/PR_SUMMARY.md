@@ -11,6 +11,9 @@
 - `app.py` に artifact 整合性チェックを追加し、`processed.csv` / `feature_cols.json` / `scaler.pkl` / `model.keras` の世代不一致を分かりやすく表示するようにした。
 - Kaggle 同期 UI を `Kernel Ref (owner/kernel-slug)` に変更し、403 / 404 の切り分けメッセージと staged sync を追加した。
 - Kaggle staged sync を global 判定から per-loto 判定へ変更し、今回対象外の loto_type は部分更新から安全にスキップできるようにした。
+- `artifact_schema_version` / `bundle_id` を導入し、manifest / eval_report / prediction_history に bundle 世代情報を持たせた。
+- per-loto clean sync で、更新対象 loto_type は古いローカル artifact を削除してから新 bundle を一括配置するようにした。
+- Streamlit サイドバーに loto_type ごとのローカル artifact 削除ボタンを追加した。
 - `AGENT.md` と `docs/` を追加し、運用・評価・復旧手順を明文化した。
 
 ## 実装判断
@@ -23,3 +26,4 @@
 - 整合性エラー時は prediction tab のみ停止し、評価タブと実績照合タブは残す方針にした。artifact 世代の切り分けを UI 上で続けられるため。
 - Kaggle 同期は download 後に bundle を検査し、不完全なら local replace を始めない方針にした。partial sync による世代混在を避けるため。
 - ただし翌営業日の partial run では非対象 loto_type に `processed.csv` だけ残るので、bundle 検査も loto_type 単位に変更した。対象外はスキップ、対象だけ厳密更新とした。
+- schema version 変更直後は古い local artifact との混在が起きやすいので、manifest の `artifact_schema_version` / `bundle_id` を見て clean sync する方針にした。初回移行時は全 loto_type を一度揃える運用を推奨する。

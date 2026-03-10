@@ -14,12 +14,16 @@
 ## eval_report の要点
 - 旧キー: `Model (LSTM)`, `Baselines`, `Online Baselines`
 - 新キー:
+  - `artifact_schema_version`
+  - `bundle_id`
   - `legacy_holdout`
   - `walk_forward.settings`
   - `walk_forward.folds`
   - `walk_forward.aggregate`
 
 ## manifest の要点
+- `artifact_schema_version`
+- `bundle_id`
 - `generated_at`
 - `loto_type`
 - `latest_draw_id`
@@ -32,6 +36,8 @@
 
 ## prediction_history の要点
 - `schema_version`
+- `artifact_schema_version`
+- `bundle_id`
 - `generated_at`
 - `loto_type`
 - `record_count`
@@ -53,3 +59,4 @@
 - モデル本体と scaler は再生成可能だが、UI 起動には必要。
 - Streamlit の予測タブは `processed.csv` / `feature_cols.json` / `scaler.pkl` / `model.keras` の世代が揃っている前提。Kaggle 同期ではこれらを一時ディレクトリにまとめて取得してから最後に入れ替える。
 - GitHub Actions の翌営業日実行では対象 loto_type だけ更新される。同期側も loto_type ごとに完全 bundle を判定し、完全な loto_type だけを部分更新する。
+- clean sync は manifest の `artifact_schema_version` / `bundle_id` を基準に行う。更新対象 loto_type では古いローカル bundle を先に削除してから新しい bundle を配置する。

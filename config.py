@@ -8,6 +8,7 @@ LOTO_CONFIG = {
 }
 
 LOOKBACK_WINDOW = 10
+ARTIFACT_SCHEMA_VERSION = 3
 PRIMES = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43}
 
 # --- サンプリング関数 ---
