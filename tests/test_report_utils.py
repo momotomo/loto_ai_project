@@ -20,6 +20,7 @@ def test_report_utils_extract_rows_from_new_artifacts():
         "model_variants": {
             "legacy": {
                 "dataset_variant": "legacy",
+                "model_family": "temporal_lstm",
                 "feature_strategy": "tabular",
                 "calibration_selection": {
                     "recommended_method": "temperature",
@@ -56,6 +57,33 @@ def test_report_utils_extract_rows_from_new_artifacts():
                         }
                     }
                 },
+            },
+            "deepsets": {
+                "dataset_variant": "deepsets",
+                "model_family": "deepsets_sequence",
+                "feature_strategy": "set_sequence_deepsets",
+                "feature_channels": ["number_norm", "frequency", "gap"],
+                "input_summary": {"set_cardinality": 6, "element_feature_count": 3},
+                "set_pooling": "mean",
+                "lookback_integration": "sequence_lstm",
+                "calibration_selection": {
+                    "recommended_method": "none",
+                    "recommended_metrics": {"logloss": 0.78, "brier": 0.18, "ece": 0.03, "sample_count": 24},
+                    "raw_metrics": {"logloss": 0.78, "brier": 0.18, "ece": 0.03, "sample_count": 24},
+                    "methods": [],
+                },
+                "walk_forward": {
+                    "aggregate": {
+                        "model": {
+                            "metric_summary": {
+                                "logloss": {"mean": 0.78},
+                                "brier": {"mean": 0.18},
+                                "ece": {"mean": 0.03},
+                                "mean_overlap_top_k": {"mean": 1.2},
+                            }
+                        }
+                    }
+                },
             }
         },
         "statistical_tests": {
@@ -78,10 +106,12 @@ def test_report_utils_extract_rows_from_new_artifacts():
     calibration_rows = build_calibration_summary_rows(report)
     statistical_rows = build_statistical_test_rows(report)
 
-    assert variant_rows[0]["variant"] == "legacy"
-    assert variant_rows[0]["feature_strategy"] == "tabular"
-    assert variant_rows[0]["selected_calibration_method"] == "temperature"
-    assert variant_rows[0]["ece"] == 0.02
+    variant_rows_by_name = {row["variant"]: row for row in variant_rows}
+    assert variant_rows_by_name["legacy"]["feature_strategy"] == "tabular"
+    assert variant_rows_by_name["legacy"]["selected_calibration_method"] == "temperature"
+    assert variant_rows_by_name["legacy"]["ece"] == 0.02
+    assert variant_rows_by_name["deepsets"]["model_family"] == "deepsets_sequence"
+    assert variant_rows_by_name["deepsets"]["set_cardinality"] == 6
     assert calibration_rows[1]["method"] == "temperature"
     assert calibration_rows[1]["selected"] is True
     assert statistical_rows[0]["comparison"] == "multihot_vs_legacy"

@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--targets", nargs="+", required=True)
     parser.add_argument("--train-preset", default="fast")
     parser.add_argument("--model-variant", default="legacy")
-    parser.add_argument("--evaluation-model-variants", default="legacy,multihot")
+    parser.add_argument("--evaluation-model-variants", default="legacy,multihot", help="例: legacy,multihot,deepsets")
     parser.add_argument("--saved-calibration-method", default="none")
     parser.add_argument("--evaluation-calibration-methods", default="none,temperature,isotonic")
     parser.add_argument("--seed", type=int, default=42)

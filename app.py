@@ -682,8 +682,13 @@ def load_prediction_calibrator(loto_type, manifest):
 def inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler, manifest=None, prepared_dataset=None):
     feature_strategy = resolve_feature_strategy_from_manifest(manifest)
     prepared_feature_count = None
+    scaler_feature_count = None
+    input_summary = None
     if prepared_dataset is not None:
         prepared_feature_count = len(prepared_dataset.get("feature_cols", []))
+        dataset_metadata = prepared_dataset.get("dataset_metadata") or {}
+        scaler_feature_count = dataset_metadata.get("scaler_feature_count")
+        input_summary = dataset_metadata.get("input_summary")
     return inspect_prediction_artifact_integrity_helper(
         df=df,
         feature_cols=feature_cols,
@@ -692,6 +697,8 @@ def inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, sc
         lookback_window=LOOKBACK_WINDOW,
         feature_strategy=feature_strategy,
         prepared_feature_count=prepared_feature_count,
+        scaler_feature_count=scaler_feature_count,
+        input_summary=input_summary,
     )
 
 
@@ -716,6 +723,8 @@ def render_prediction_integrity_issues(loto_type, issues, manifest=None):
             st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
         elif issue["kind"] == "scaler_dimension_mismatch":
             st.write(f"  - scaler 入力次元: {issue['scaler_feature_count']}")
+            if issue.get("expected_scaler_feature_count") is not None:
+                st.write(f"  - 期待 scaler 次元: {issue['expected_scaler_feature_count']}")
             st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
         elif issue["kind"] == "model_lookback_mismatch":
             st.write(f"  - model lookback: {issue['model_lookback']}")
@@ -723,6 +732,12 @@ def render_prediction_integrity_issues(loto_type, issues, manifest=None):
         elif issue["kind"] == "model_feature_mismatch":
             st.write(f"  - model input feature 次元: {issue['model_feature_count']}")
             st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
+        elif issue["kind"] == "model_set_cardinality_mismatch":
+            st.write(f"  - model set cardinality: {issue['model_set_cardinality']}")
+            st.write(f"  - expected set cardinality: {issue['expected_set_cardinality']}")
+        elif issue["kind"] == "model_element_feature_mismatch":
+            st.write(f"  - model element feature 次元: {issue['model_element_feature_count']}")
+            st.write(f"  - expected element feature 次元: {issue['expected_element_feature_count']}")
         elif issue["kind"] == "prepared_feature_mismatch":
             st.write(f"  - 生成済み特徴数: {issue['prepared_feature_count']}")
             st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
@@ -990,6 +1005,16 @@ def render_manifest_section(manifest):
             f"lookback={training_context.get('lookback_window', '-')}, "
             f"feature_cols={training_context.get('feature_column_count', '-')}"
         )
+        input_summary = training_context.get("input_summary") or {}
+        if input_summary:
+            st.caption(
+                "model_family="
+                f"{training_context.get('model_family', '-')}, "
+                f"set_cardinality={input_summary.get('set_cardinality', '-')}, "
+                f"element_feature_count={input_summary.get('element_feature_count', '-')}, "
+                f"pooling={input_summary.get('pooling', '-')}, "
+                f"lookback_integration={training_context.get('lookback_integration', '-')}"
+            )
     if selected_calibration_model:
         st.caption(
             "pre/post calibration: "
@@ -1161,11 +1186,40 @@ def render_walk_forward_section(report):
             f"promote_candidate={decision_summary.get('should_promote_candidate', '-')}"
         )
         st.caption(
-            "rule: multihot が best static と legacy の両方に対して CI/p-value 条件を満たし、"
+            "rule: challenger variant が best static と legacy に対して CI/p-value 条件を満たし、"
             "さらに選択 calibration でも logloss/Brier/ECE guardrail を満たした場合のみ昇格候補にします。"
         )
         for line in decision_summary.get("reason_summary", [])[:5]:
             st.caption(f"- {line}")
+        challenger_decisions = decision_summary.get("challenger_decisions") or {}
+        if challenger_decisions:
+            challenger_rows = []
+            for variant_name, payload in sorted(challenger_decisions.items()):
+                flags = payload.get("flags") or {}
+                selected_metrics = payload.get("selected_metrics") or {}
+                challenger_rows.append(
+                    {
+                        "variant": format_model_variant_label(variant_name),
+                        "selected_calibration": safe_calibration_label(payload.get("selected_calibration_method")),
+                        "logloss": format_metric(selected_metrics.get("logloss")),
+                        "brier": format_metric(selected_metrics.get("brier")),
+                        "ece": format_metric(selected_metrics.get("ece")),
+                        "beats_best_static_ci": flags.get("beats_best_static_with_ci"),
+                        "beats_best_static_p": flags.get("beats_best_static_with_p_value"),
+                        "beats_legacy_ci": flags.get("beats_legacy_with_ci"),
+                        "beats_legacy_p": flags.get("beats_legacy_with_p_value"),
+                        "calibration_guardrail": all(
+                            flags.get(name) is True
+                            for name in [
+                                "calibration_logloss_non_worse",
+                                "calibration_brier_non_worse",
+                                "calibration_ece_guardrail",
+                            ]
+                        ),
+                        "should_promote": payload.get("should_promote"),
+                    }
+                )
+            st.dataframe(pd.DataFrame(challenger_rows), use_container_width=True)
 
     online_rows = [
         summary_entry_to_row(BASELINE_LABELS.get(name, name), summary)
@@ -1416,6 +1470,14 @@ def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols, ma
         f"feature_strategy={resolve_feature_strategy_from_manifest(manifest)}, "
         f"feature_cols={len(feature_cols)}"
     )
+    input_summary = ((manifest or {}).get("training_context") or {}).get("input_summary") or {}
+    if input_summary:
+        st.caption(
+            "input_summary: "
+            f"set_cardinality={input_summary.get('set_cardinality', '-')}, "
+            f"element_feature_count={input_summary.get('element_feature_count', '-')}, "
+            f"pooling={input_summary.get('pooling', '-')}"
+        )
     recent_input = prepared_recent_input
     probs = model(tf.convert_to_tensor(recent_input), training=False).numpy()[0]
     applied_calibration_method = NO_CALIBRATION_METHOD

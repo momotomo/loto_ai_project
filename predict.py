@@ -14,7 +14,7 @@ from calibration_utils import (
     load_calibrator_artifact,
 )
 from config import LOTO_CONFIG, LOOKBACK_WINDOW, generate_valid_sample
-from model_variants import build_recent_model_input, resolve_model_variant_from_manifest
+from model_variants import MODEL_VARIANT_CHOICES, build_recent_model_input, resolve_model_variant_from_manifest
 from report_utils import get_saved_calibration_method
 
 warnings.filterwarnings('ignore')
@@ -28,7 +28,7 @@ MODEL_DIR = "models"
 def parse_args():
     parser = argparse.ArgumentParser(description="Run a quick lottery prediction smoke test.")
     parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
-    parser.add_argument("--model_variant", choices=["legacy", "multihot"], help="manifest が無い場合の variant 上書き")
+    parser.add_argument("--model_variant", choices=sorted(MODEL_VARIANT_CHOICES), help="manifest が無い場合の variant 上書き")
     parser.add_argument("--disable_calibration", action="store_true", help="保存済み calibrator があっても適用しない")
     return parser.parse_args()
 

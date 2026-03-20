@@ -28,6 +28,16 @@ def build_model(feature_count):
     )
 
 
+def build_deepsets_model(set_cardinality, element_feature_count):
+    return tf.keras.Sequential(
+        [
+            tf.keras.layers.Input(shape=(LOOKBACK_WINDOW, set_cardinality, element_feature_count)),
+            tf.keras.layers.Flatten(),
+            tf.keras.layers.Dense(4),
+        ]
+    )
+
+
 def test_bundle_ids_match_across_json_artifacts():
     bundle_id = "bundle-loto6-001"
     manifest = {"bundle_id": bundle_id, "artifact_schema_version": ARTIFACT_SCHEMA_VERSION}
@@ -76,3 +86,31 @@ def test_prediction_artifact_integrity_detects_prepared_feature_count_mismatch()
     )
 
     assert any(issue["kind"] == "prepared_feature_mismatch" for issue in issues)
+
+
+def test_prediction_artifact_integrity_supports_deepsets_input_shapes():
+    df = build_feature_frame()
+    feature_cols = [
+        "slot01_number_norm",
+        "slot01_frequency",
+        "slot01_gap",
+        "slot02_number_norm",
+        "slot02_frequency",
+        "slot02_gap",
+    ]
+    scaler = MinMaxScaler().fit(np.random.rand(len(df) * 2, 3).astype(np.float32))
+    model = build_deepsets_model(set_cardinality=2, element_feature_count=3)
+
+    issues = inspect_prediction_artifact_integrity(
+        df=df,
+        feature_cols=feature_cols,
+        model=model,
+        scaler=scaler,
+        lookback_window=LOOKBACK_WINDOW,
+        feature_strategy="set_sequence_deepsets",
+        prepared_feature_count=len(feature_cols),
+        scaler_feature_count=3,
+        input_summary={"set_cardinality": 2, "element_feature_count": 3},
+    )
+
+    assert issues == []
