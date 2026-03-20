@@ -11,8 +11,10 @@
 - `scripts/kaggle_entry.py`
 - `scripts/compute_kick_targets.py`
 - `artifact_utils.py`
+- `calibration_utils.py`
 - `model_variants.py`
 - `evaluation_statistics.py`
+- `report_utils.py`
 
 ## セットアップ
 1. Kaggle で API token を発行し、`kaggle.json` の中身を GitHub Secret `KAGGLE_JSON` に登録する。
@@ -32,11 +34,11 @@
 - Kaggle script kernel では `code_file` 単体しか確実に見えない前提にする。`/kaggle/src` に複数ファイルが並ぶことを期待しない。
 - `scripts/kaggle_prepare_kernel_dir.py` は allowlist の Python ファイルと `data/*.csv` と `run_config.json` を zip 化し、base64 payload として `script.py` に埋め込む。
 - `scripts/kaggle_entry.py` は runtime テンプレートとして使い、起動時に payload を `/kaggle/working/app` へ展開してから、そのディレクトリを `cwd` にして実行する。
-- `run_config.json` には `targets`、`train_preset`、`model_variant`、`evaluation_model_variants`、`seed` が入り、各 target ごとに `data_collector.py --loto_type X` と `train_prob_model.py --loto_type X --preset fast --model_variant legacy --evaluation_model_variants legacy,multihot --seed 42 --skip_legacy_holdout` を実行する。
+- `run_config.json` には `targets`、`train_preset`、`model_variant`、`evaluation_model_variants`、`saved_calibration_method`、`evaluation_calibration_methods`、`seed` が入り、各 target ごとに `data_collector.py --loto_type X` と `train_prob_model.py --loto_type X --preset fast --model_variant legacy --evaluation_model_variants legacy,multihot --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic --seed 42 --skip_legacy_holdout` を実行する。
 - 取得失敗時は build dir に同梱した `data/` を fallback として使い、学習を継続する。
 - 学習・推論で作られた成果物はまず `/kaggle/working/app/data` と `/kaggle/working/app/models` に置かれ、終了時に `/kaggle/working/data` と `/kaggle/working/models` へ export する。Streamlit 同期は root を正とし、移行期間だけ `app/` 配下も fallback で読む。
 - payload 展開方式にした理由は、Kaggle 側で `/kaggle/src` に `script.py` しか存在せず `data_collector.py` / `train_prob_model.py` が見つからない失敗を根本的に避けるため。
-- `artifact_utils.py` / `model_variants.py` / `evaluation_statistics.py` も payload に含め、manifest / eval_report / multihot 入力再構築 / 統計検定が Kaggle 側でも同じコードで生成されるようにする。
+- `artifact_utils.py` / `calibration_utils.py` / `model_variants.py` / `evaluation_statistics.py` / `report_utils.py` も payload に含め、manifest / eval_report / calibration / multihot 入力再構築 / 統計検定が Kaggle 側でも同じコードで生成されるようにする。
 
 ## 翌営業日判定
 - 祝日判定は内閣府 CSV `https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv` を参照する。

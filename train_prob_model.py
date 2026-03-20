@@ -14,6 +14,23 @@ from tensorflow.keras.layers import BatchNormalization, Dense, Dropout, Input, L
 from tensorflow.keras.models import Sequential
 
 from artifact_utils import build_data_fingerprint, collect_file_metadata, collect_runtime_environment
+from calibration_utils import (
+    CALIBRATION_METHOD_CHOICES,
+    DEFAULT_EVALUATION_CALIBRATION_METHODS,
+    DEFAULT_SAVED_CALIBRATION_METHOD,
+    NO_CALIBRATION_METHOD,
+    apply_calibration_artifact,
+    build_calibration_quality_summary,
+    build_identity_calibrator_artifact,
+    fit_calibrator,
+    get_calibration_method_label,
+    get_calibrator_candidate_paths,
+    get_calibrator_file_name,
+    load_calibrator_artifact,
+    resolve_calibration_method,
+    resolve_evaluation_calibration_methods,
+    summarize_calibrator_artifact,
+)
 from config import (
     ARTIFACT_SCHEMA_VERSION,
     EVAL_REPORT_SCHEMA_VERSION,
@@ -54,6 +71,11 @@ DEFAULT_SEED = 42
 DEFAULT_STATISTICAL_ALPHA = 0.05
 DEFAULT_BOOTSTRAP_SAMPLES = 2000
 DEFAULT_PERMUTATION_SAMPLES = 2000
+DEFAULT_CALIBRATION_FRACTION = 0.15
+DEFAULT_CALIBRATION_MIN_SAMPLES = 48
+DEFAULT_CALIBRATION_MAX_SAMPLES = 160
+DEFAULT_CALIBRATION_NUM_BINS = 10
+DEFAULT_ECE_THRESHOLD = 0.03
 EPSILON = 1e-6
 STATIC_BASELINE_NAMES = ["uniform", "frequency", "gap"]
 ONLINE_BASELINE_NAMES = ["frequency_online", "gap_online"]
@@ -111,32 +133,9 @@ def sanitize_probabilities(preds):
     return np.clip(np.asarray(preds, dtype=np.float32), EPSILON, 1.0 - EPSILON)
 
 
-def calculate_calibration(preds, targets, num_bins=10):
-    preds_flat = sanitize_probabilities(preds).reshape(-1)
-    targets_flat = np.asarray(targets, dtype=np.float32).reshape(-1)
-    bins = np.linspace(0.0, 1.0, num_bins + 1)
-    calibration = []
-
-    for idx in range(num_bins):
-        lower = bins[idx]
-        upper = bins[idx + 1]
-        if idx == num_bins - 1:
-            mask = (preds_flat >= lower) & (preds_flat <= upper)
-        else:
-            mask = (preds_flat >= lower) & (preds_flat < upper)
-
-        count = int(mask.sum())
-        calibration.append(
-            {
-                "bin_index": idx,
-                "bin_range": f"{lower:.1f}-{upper:.1f}",
-                "count": count,
-                "pred_prob": float(preds_flat[mask].mean()) if count else None,
-                "true_prob": float(targets_flat[mask].mean()) if count else None,
-            }
-        )
-
-    return calibration
+def calculate_calibration(preds, targets, num_bins=DEFAULT_CALIBRATION_NUM_BINS):
+    quality_summary = build_calibration_quality_summary(preds, targets, num_bins=num_bins)
+    return quality_summary["reliability_bins"]
 
 
 def calculate_overlap_distribution(preds, targets, k):
@@ -151,19 +150,25 @@ def calculate_overlap_distribution(preds, targets, k):
     return overlaps, overlap_dist
 
 
-def calculate_metrics(preds, targets, k):
+def calculate_metrics(preds, targets, k, calibration_num_bins=DEFAULT_CALIBRATION_NUM_BINS):
     preds = sanitize_probabilities(preds)
     targets = np.asarray(targets, dtype=np.float32)
     logloss = -np.mean(targets * np.log(preds) + (1.0 - targets) * np.log(1.0 - preds))
     brier = np.mean((preds - targets) ** 2)
     overlaps, overlap_dist = calculate_overlap_distribution(preds, targets, k)
+    quality_summary = build_calibration_quality_summary(preds, targets, num_bins=calibration_num_bins)
 
     return {
         "logloss": float(logloss),
         "brier": float(brier),
+        "ece": quality_summary["ece"],
         "mean_overlap_top_k": float(np.mean(overlaps)) if overlaps else 0.0,
         "overlap_dist": overlap_dist,
-        "calibration": calculate_calibration(preds, targets),
+        "calibration": quality_summary["reliability_bins"],
+        "reliability_bins": quality_summary["reliability_bins"],
+        "calibration_summary": {
+            key: value for key, value in quality_summary.items() if key != "reliability_bins"
+        },
     }
 
 
@@ -194,6 +199,152 @@ def resolve_evaluation_model_variants(args):
     return variants
 
 
+def summarize_metrics_for_decision(metrics):
+    if not metrics:
+        return {}
+    calibration_summary = metrics.get("calibration_summary") or {}
+    return {
+        "logloss": metrics.get("logloss"),
+        "brier": metrics.get("brier"),
+        "ece": calibration_summary.get("ece", metrics.get("ece")),
+        "sample_count": calibration_summary.get("sample_count"),
+    }
+
+
+def summarize_metric_summary_for_decision(metric_summary_entry, calibration_summary=None):
+    if not metric_summary_entry:
+        return {}
+    calibration_payload = calibration_summary or {}
+    return {
+        "logloss": ((metric_summary_entry.get("logloss") or {}).get("mean")),
+        "brier": ((metric_summary_entry.get("brier") or {}).get("mean")),
+        "ece": calibration_payload.get("ece", ((metric_summary_entry.get("ece") or {}).get("mean"))),
+        "sample_count": calibration_payload.get("sample_count"),
+    }
+
+
+def build_metric_delta_summary(post_metrics, raw_metrics):
+    post_summary = summarize_metrics_for_decision(post_metrics)
+    raw_summary = summarize_metrics_for_decision(raw_metrics)
+    return {
+        "logloss": (
+            None
+            if post_summary.get("logloss") is None or raw_summary.get("logloss") is None
+            else float(post_summary["logloss"] - raw_summary["logloss"])
+        ),
+        "brier": (
+            None
+            if post_summary.get("brier") is None or raw_summary.get("brier") is None
+            else float(post_summary["brier"] - raw_summary["brier"])
+        ),
+        "ece": (
+            None
+            if post_summary.get("ece") is None or raw_summary.get("ece") is None
+            else float(post_summary["ece"] - raw_summary["ece"])
+        ),
+    }
+
+
+def resolve_calibration_sample_count(
+    train_sample_count,
+    evaluation_calibration_methods,
+    calibration_fraction,
+    calibration_min_samples,
+    calibration_max_samples,
+):
+    active_methods = [method for method in evaluation_calibration_methods if method != NO_CALIBRATION_METHOD]
+    if not active_methods:
+        return 0
+
+    proposed = int(round(float(train_sample_count) * float(calibration_fraction)))
+    proposed = max(int(calibration_min_samples), proposed)
+    proposed = min(int(calibration_max_samples), proposed)
+    minimum_model_train_samples = max(LOOKBACK_WINDOW * 2, 32)
+    available = int(train_sample_count) - minimum_model_train_samples
+    if available <= 0:
+        return 0
+    return max(0, min(proposed, available))
+
+
+def build_calibration_method_reports(
+    evaluation_calibration_methods,
+    calibration_preds,
+    calibration_targets,
+    test_preds,
+    test_targets,
+    pick_count,
+    calibration_num_bins,
+):
+    calibration_preds = sanitize_probabilities(calibration_preds)
+    test_preds = sanitize_probabilities(test_preds)
+    raw_test_metrics = calculate_metrics(test_preds, test_targets, pick_count, calibration_num_bins=calibration_num_bins)
+    if len(calibration_targets):
+        raw_calibration_metrics = calculate_metrics(
+            calibration_preds,
+            calibration_targets,
+            pick_count,
+            calibration_num_bins=calibration_num_bins,
+        )
+    else:
+        raw_calibration_metrics = None
+
+    reports = {}
+    calibrated_test_preds_map = {}
+    for method_name in evaluation_calibration_methods:
+        if method_name == NO_CALIBRATION_METHOD:
+            calibrator_artifact = build_identity_calibrator_artifact()
+        else:
+            calibrator_artifact = fit_calibrator(method_name, calibration_preds, calibration_targets)
+
+        calibrated_calibration_preds = (
+            apply_calibration_artifact(calibrator_artifact, calibration_preds)
+            if len(calibration_targets)
+            else calibration_preds
+        )
+        calibrated_test_preds = apply_calibration_artifact(calibrator_artifact, test_preds)
+        calibrated_test_metrics = calculate_metrics(
+            calibrated_test_preds,
+            test_targets,
+            pick_count,
+            calibration_num_bins=calibration_num_bins,
+        )
+        calibrated_test_preds_map[method_name] = calibrated_test_preds
+
+        if raw_calibration_metrics is not None and len(calibration_targets):
+            calibrated_calibration_metrics = calculate_metrics(
+                calibrated_calibration_preds,
+                calibration_targets,
+                pick_count,
+                calibration_num_bins=calibration_num_bins,
+            )
+        else:
+            calibrated_calibration_metrics = None
+
+        reports[method_name] = {
+            "method": method_name,
+            "label": get_calibration_method_label(method_name),
+            "status": calibrator_artifact.get("status", "unknown"),
+            "calibration_sample_count": int(len(calibration_targets)),
+            "calibrator_summary": summarize_calibrator_artifact(calibrator_artifact),
+            "calibration_fit_metrics": {
+                "pre": raw_calibration_metrics,
+                "post": calibrated_calibration_metrics,
+            },
+            "test_metrics": calibrated_test_metrics,
+            "delta_vs_raw": build_metric_delta_summary(calibrated_test_metrics, raw_test_metrics),
+        }
+
+    return raw_test_metrics, reports, calibrated_test_preds_map
+
+
+def summarize_status_counts(status_values):
+    counts = {}
+    for value in status_values:
+        key = str(value or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def target_vector_to_numbers(target_vector):
     indices = np.flatnonzero(np.asarray(target_vector, dtype=np.float32) > 0.5)
     return [int(index) + 1 for index in indices.tolist()]
@@ -205,6 +356,7 @@ def build_prediction_history_records(
     targets,
     loto_type,
     model_variant,
+    calibration_method,
     pick_count,
     max_num,
     sample_start,
@@ -228,6 +380,7 @@ def build_prediction_history_records(
                 "date": str(draw_row["date"]),
                 "loto_type": loto_type,
                 "model_variant": model_variant,
+                "calibration_method": calibration_method,
                 "evaluation_mode": evaluation_mode,
                 "fold_index": int(fold_index) if fold_index is not None else None,
                 "actual_numbers": actual_numbers,
@@ -256,7 +409,7 @@ def build_prediction_history_artifact(loto_type, records, generated_at, bundle_i
         ),
     )
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "bundle_id": bundle_id,
         "generated_at": generated_at,
@@ -273,10 +426,12 @@ def metrics_to_summary_entry(metrics):
         "metric_summary": {
             "logloss": {"mean": metrics["logloss"], "variance": 0.0},
             "brier": {"mean": metrics["brier"], "variance": 0.0},
+            "ece": {"mean": metrics.get("ece"), "variance": 0.0},
             "mean_overlap_top_k": {"mean": metrics["mean_overlap_top_k"], "variance": 0.0},
         },
         "overlap_dist_total": metrics["overlap_dist"],
         "calibration": metrics["calibration"],
+        "calibration_summary": metrics.get("calibration_summary"),
     }
 
 
@@ -285,9 +440,11 @@ def summary_entry_to_metrics(summary_entry):
     return {
         "logloss": metric_summary["logloss"]["mean"],
         "brier": metric_summary["brier"]["mean"],
+        "ece": ((metric_summary.get("ece") or {}).get("mean")),
         "mean_overlap_top_k": metric_summary["mean_overlap_top_k"]["mean"],
         "overlap_dist": summary_entry["overlap_dist_total"],
-        "calibration": summary_entry["calibration"],
+        "calibration": summary_entry.get("calibration", []),
+        "calibration_summary": summary_entry.get("calibration_summary"),
     }
 
 
@@ -448,17 +605,19 @@ def aggregate_named_reports(metrics_by_name, preds_by_name, targets_by_name, pic
     for name, fold_metrics in metrics_by_name.items():
         merged_preds = np.concatenate(preds_by_name[name], axis=0)
         merged_targets = np.concatenate(targets_by_name[name], axis=0)
-        overlap_dist = calculate_overlap_distribution(merged_preds, merged_targets, pick_count)[1]
+        merged_metrics = calculate_metrics(merged_preds, merged_targets, pick_count)
         aggregate[name] = {
             "fold_count": len(fold_metrics),
             "test_samples": int(len(merged_targets)),
             "metric_summary": {
                 "logloss": summarize_metric_series([item["logloss"] for item in fold_metrics]),
                 "brier": summarize_metric_series([item["brier"] for item in fold_metrics]),
+                "ece": summarize_metric_series([item.get("ece") for item in fold_metrics if item.get("ece") is not None]),
                 "mean_overlap_top_k": summarize_metric_series([item["mean_overlap_top_k"] for item in fold_metrics]),
             },
-            "overlap_dist_total": overlap_dist,
-            "calibration": calculate_calibration(merged_preds, merged_targets),
+            "overlap_dist_total": merged_metrics["overlap_dist"],
+            "calibration": merged_metrics["calibration"],
+            "calibration_summary": merged_metrics.get("calibration_summary"),
         }
 
     return aggregate
@@ -509,44 +668,95 @@ def evaluate_split(
     epochs,
     batch_size,
     patience,
+    evaluation_calibration_methods,
+    calibration_fraction,
+    calibration_min_samples,
+    calibration_max_samples,
+    calibration_num_bins,
     evaluation_mode,
     fold_index=None,
 ):
+    calibration_sample_count = resolve_calibration_sample_count(
+        train_sample_count=train_end,
+        evaluation_calibration_methods=evaluation_calibration_methods,
+        calibration_fraction=calibration_fraction,
+        calibration_min_samples=calibration_min_samples,
+        calibration_max_samples=calibration_max_samples,
+    )
+    model_train_end = train_end - calibration_sample_count if calibration_sample_count > 0 else train_end
+
     scaler = fit_scaler_for_split(raw_features, train_end)
     required_rows = LOOKBACK_WINDOW + test_end
     scaled_features = scaler.transform(raw_features[:required_rows])
 
-    X_train, y_train = build_samples_from_scaled_features(scaled_features, targets, 0, train_end)
+    X_train, y_train = build_samples_from_scaled_features(scaled_features, targets, 0, model_train_end)
+    X_calibration, y_calibration = build_samples_from_scaled_features(
+        scaled_features,
+        targets,
+        model_train_end,
+        train_end,
+    )
     X_test, y_test = build_samples_from_scaled_features(scaled_features, targets, train_end, test_end)
 
     model = fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience)
     preds_test = sanitize_probabilities(model(tf.convert_to_tensor(X_test), training=False).numpy())
-    model_metrics = calculate_metrics(preds_test, y_test, pick_count)
-    baseline_outputs = evaluate_baselines(y_train, y_test, max_num, pick_count)
-    history_records = build_prediction_history_records(
-        df=df,
-        preds=preds_test,
-        targets=y_test,
-        loto_type=loto_type,
-        model_variant=model_variant,
-        pick_count=pick_count,
-        max_num=max_num,
-        sample_start=train_end,
-        evaluation_mode=evaluation_mode,
-        fold_index=fold_index,
+    preds_calibration = (
+        sanitize_probabilities(model(tf.convert_to_tensor(X_calibration), training=False).numpy())
+        if len(X_calibration)
+        else np.zeros((0, max_num), dtype=np.float32)
     )
+    model_metrics, calibration_method_reports, calibrated_test_preds_map = build_calibration_method_reports(
+        evaluation_calibration_methods=evaluation_calibration_methods,
+        calibration_preds=preds_calibration,
+        calibration_targets=y_calibration,
+        test_preds=preds_test,
+        test_targets=y_test,
+        pick_count=pick_count,
+        calibration_num_bins=calibration_num_bins,
+    )
+    baseline_outputs = evaluate_baselines(targets[:train_end], y_test, max_num, pick_count)
+    history_records = []
+    for method_name in evaluation_calibration_methods:
+        history_records.extend(
+            build_prediction_history_records(
+                df=df,
+                preds=calibrated_test_preds_map[method_name],
+                targets=y_test,
+                loto_type=loto_type,
+                model_variant=model_variant,
+                calibration_method=method_name,
+                pick_count=pick_count,
+                max_num=max_num,
+                sample_start=train_end,
+                evaluation_mode=evaluation_mode,
+                fold_index=fold_index,
+            )
+        )
 
     split_report = {
-        "train_samples": int(len(y_train)),
+        "train_samples": int(train_end),
+        "model_train_samples": int(len(y_train)),
+        "calibration_samples": int(len(y_calibration)),
         "test_samples": int(len(y_test)),
         "train_range": build_sample_range_metadata(df, 0, train_end),
+        "model_train_range": build_sample_range_metadata(df, 0, model_train_end) if model_train_end > 0 else None,
+        "calibration_range": (
+            build_sample_range_metadata(df, model_train_end, train_end) if len(y_calibration) else None
+        ),
         "test_range": build_sample_range_metadata(df, train_end, test_end),
         "model": model_metrics,
+        "calibration_methods": calibration_method_reports,
         "static_baselines": {name: payload["metrics"] for name, payload in baseline_outputs["static_baselines"].items()},
         "online_baselines": {name: payload["metrics"] for name, payload in baseline_outputs["online_baselines"].items()},
     }
 
-    return split_report, scaler, model, preds_test, y_test, baseline_outputs, history_records
+    comparison_payload = {
+        "targets": y_test,
+        "model_preds": preds_test,
+        "calibration_method_preds": calibrated_test_preds_map,
+    }
+
+    return split_report, scaler, model, preds_test, y_test, baseline_outputs, history_records, comparison_payload
 
 
 def evaluate_walk_forward(
@@ -563,6 +773,11 @@ def evaluate_walk_forward(
     epochs,
     batch_size,
     patience,
+    evaluation_calibration_methods,
+    calibration_fraction,
+    calibration_min_samples,
+    calibration_max_samples,
+    calibration_num_bins,
 ):
     fold_starts = select_walk_forward_starts(len(targets), initial_train_fraction, test_window, max_folds)
     if not fold_starts:
@@ -573,6 +788,10 @@ def evaluate_walk_forward(
     metrics_by_name = {"model": []}
     preds_by_name = {"model": []}
     targets_by_name = {"model": []}
+    for method_name in evaluation_calibration_methods:
+        metrics_by_name[f"calibration:{method_name}"] = []
+        preds_by_name[f"calibration:{method_name}"] = []
+        targets_by_name[f"calibration:{method_name}"] = []
 
     for baseline_name in STATIC_BASELINE_NAMES:
         metrics_by_name[f"static_baselines:{baseline_name}"] = []
@@ -590,7 +809,16 @@ def evaluate_walk_forward(
             f"    - fold {fold_index}/{len(fold_starts)}: "
             f"train_samples={train_end}, test_samples={test_end - train_end}"
         )
-        split_report, _, model, preds_test, y_test, baseline_outputs, split_history_records = evaluate_split(
+        (
+            split_report,
+            _,
+            model,
+            preds_test,
+            y_test,
+            baseline_outputs,
+            split_history_records,
+            split_comparison_payload,
+        ) = evaluate_split(
             df=df,
             raw_features=raw_features,
             targets=targets,
@@ -603,6 +831,11 @@ def evaluate_walk_forward(
             epochs=epochs,
             batch_size=batch_size,
             patience=patience,
+            evaluation_calibration_methods=evaluation_calibration_methods,
+            calibration_fraction=calibration_fraction,
+            calibration_min_samples=calibration_min_samples,
+            calibration_max_samples=calibration_max_samples,
+            calibration_num_bins=calibration_num_bins,
             evaluation_mode="walk_forward",
             fold_index=fold_index,
         )
@@ -613,6 +846,11 @@ def evaluate_walk_forward(
         metrics_by_name["model"].append(split_report["model"])
         preds_by_name["model"].append(preds_test)
         targets_by_name["model"].append(y_test)
+        for method_name, method_payload in split_report.get("calibration_methods", {}).items():
+            key = f"calibration:{method_name}"
+            metrics_by_name[key].append(method_payload["test_metrics"])
+            preds_by_name[key].append(split_comparison_payload["calibration_method_preds"][method_name])
+            targets_by_name[key].append(y_test)
 
         for category, named_outputs in baseline_outputs.items():
             for name, payload in named_outputs.items():
@@ -631,9 +869,62 @@ def evaluate_walk_forward(
             {"model": targets_by_name["model"]},
             pick_count,
         )["model"],
+        "calibration_methods": {},
         "static_baselines": {},
         "online_baselines": {},
     }
+
+    for method_name in evaluation_calibration_methods:
+        key = f"calibration:{method_name}"
+        calibration_aggregate = aggregate_named_reports(
+            {method_name: metrics_by_name[key]},
+            {method_name: preds_by_name[key]},
+            {method_name: targets_by_name[key]},
+            pick_count,
+        )[method_name]
+        status_values = [
+            (fold.get("calibration_methods", {}).get(method_name, {}) or {}).get("status") for fold in folds
+        ]
+        calibration_sample_counts = [
+            int((fold.get("calibration_methods", {}).get(method_name, {}) or {}).get("calibration_sample_count", 0))
+            for fold in folds
+        ]
+        calibration_aggregate["status_counts"] = summarize_status_counts(status_values)
+        calibration_aggregate["calibration_sample_summary"] = {
+            "min": min(calibration_sample_counts) if calibration_sample_counts else 0,
+            "max": max(calibration_sample_counts) if calibration_sample_counts else 0,
+            "mean": float(np.mean(calibration_sample_counts)) if calibration_sample_counts else 0.0,
+        }
+        calibration_aggregate["delta_vs_raw"] = {
+            "logloss": (
+                None
+                if calibration_aggregate["metric_summary"]["logloss"]["mean"] is None
+                or aggregate["model"]["metric_summary"]["logloss"]["mean"] is None
+                else float(
+                    calibration_aggregate["metric_summary"]["logloss"]["mean"]
+                    - aggregate["model"]["metric_summary"]["logloss"]["mean"]
+                )
+            ),
+            "brier": (
+                None
+                if calibration_aggregate["metric_summary"]["brier"]["mean"] is None
+                or aggregate["model"]["metric_summary"]["brier"]["mean"] is None
+                else float(
+                    calibration_aggregate["metric_summary"]["brier"]["mean"]
+                    - aggregate["model"]["metric_summary"]["brier"]["mean"]
+                )
+            ),
+            "ece": (
+                None
+                if (calibration_aggregate.get("calibration_summary") or {}).get("ece") is None
+                or (aggregate["model"].get("calibration_summary") or {}).get("ece") is None
+                else float(
+                    calibration_aggregate["calibration_summary"]["ece"]
+                    - aggregate["model"]["calibration_summary"]["ece"]
+                )
+            ),
+        }
+        aggregate["calibration_methods"][method_name] = calibration_aggregate
 
     for category in ["static_baselines", "online_baselines"]:
         category_metric_map = {}
@@ -649,6 +940,10 @@ def evaluate_walk_forward(
     comparison_payload = {
         "targets": np.concatenate(targets_by_name["model"], axis=0),
         "model_preds": np.concatenate(preds_by_name["model"], axis=0),
+        "calibration_method_preds": {
+            method_name: np.concatenate(preds_by_name[f"calibration:{method_name}"], axis=0)
+            for method_name in evaluation_calibration_methods
+        },
         "static_baseline_preds": {
             name: np.concatenate(preds_by_name[f"static_baselines:{name}"], axis=0) for name in STATIC_BASELINE_NAMES
         },
@@ -670,13 +965,53 @@ def evaluate_walk_forward(
     )
 
 
-def train_final_model(raw_features, targets, max_num, epochs, batch_size, patience):
+def train_final_model(
+    raw_features,
+    targets,
+    max_num,
+    epochs,
+    batch_size,
+    patience,
+    saved_calibration_method,
+    calibration_fraction,
+    calibration_min_samples,
+    calibration_max_samples,
+):
     scaler = MinMaxScaler()
     scaler.fit(raw_features)
     scaled_features = scaler.transform(raw_features)
-    X_all, y_all = build_samples_from_scaled_features(scaled_features, targets, 0, len(targets))
-    model = fit_prob_model(X_all, y_all, max_num, epochs, batch_size, patience)
-    return scaler, model
+    calibration_sample_count = resolve_calibration_sample_count(
+        train_sample_count=len(targets),
+        evaluation_calibration_methods=[saved_calibration_method],
+        calibration_fraction=calibration_fraction,
+        calibration_min_samples=calibration_min_samples,
+        calibration_max_samples=calibration_max_samples,
+    )
+    model_train_end = len(targets) - calibration_sample_count if calibration_sample_count > 0 else len(targets)
+    X_train, y_train = build_samples_from_scaled_features(scaled_features, targets, 0, model_train_end)
+    X_calibration, y_calibration = build_samples_from_scaled_features(
+        scaled_features,
+        targets,
+        model_train_end,
+        len(targets),
+    )
+    model = fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience)
+    calibration_preds = (
+        sanitize_probabilities(model(tf.convert_to_tensor(X_calibration), training=False).numpy())
+        if len(X_calibration)
+        else np.zeros((0, max_num), dtype=np.float32)
+    )
+    calibrator_artifact = fit_calibrator(saved_calibration_method, calibration_preds, y_calibration)
+    effective_calibration_method = (
+        saved_calibration_method if calibrator_artifact.get("status") == "fitted" else NO_CALIBRATION_METHOD
+    )
+    return scaler, model, calibrator_artifact, {
+        "requested_calibration_method": saved_calibration_method,
+        "effective_calibration_method": effective_calibration_method,
+        "model_train_samples": int(len(y_train)),
+        "calibration_samples": int(len(y_calibration)),
+        "calibrator_summary": summarize_calibrator_artifact(calibrator_artifact),
+    }
 
 
 def load_existing_feature_cols(loto_type):
@@ -695,36 +1030,144 @@ def save_feature_cols(loto_type, feature_cols):
     save_json(os.path.join(MODEL_DIR, f"{loto_type}_feature_cols.json"), feature_cols)
 
 
-def persist_final_artifacts(loto_type, raw_features, targets, feature_cols, max_num, epochs, batch_size, patience, skip_final_train):
+def remove_calibrator_artifacts(loto_type):
+    for path in get_calibrator_candidate_paths(loto_type, data_dir=DATA_DIR, model_dir=MODEL_DIR):
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def save_calibrator_artifact(loto_type, calibrator_artifact):
+    for path in get_calibrator_candidate_paths(loto_type, data_dir=DATA_DIR, model_dir=MODEL_DIR):
+        save_json(path, calibrator_artifact)
+
+
+def existing_prediction_artifacts_match_feature_layout(model_path, scaler_path, feature_cols):
+    if not (os.path.exists(model_path) and os.path.exists(scaler_path)):
+        return False
+
+    try:
+        with open(scaler_path, "rb") as handle:
+            scaler = pickle.load(handle)
+        scaler_feature_count = getattr(scaler, "n_features_in_", None)
+        if scaler_feature_count is not None and int(scaler_feature_count) != len(feature_cols):
+            return False
+    except Exception:
+        return False
+
+    model = None
+    try:
+        model = tf.keras.models.load_model(model_path, compile=False)
+        input_shape = getattr(model, "input_shape", None)
+        if isinstance(input_shape, list):
+            input_shape = input_shape[0] if input_shape else None
+        if not isinstance(input_shape, tuple) or len(input_shape) < 3:
+            return False
+        lookback_size = input_shape[1]
+        feature_count = input_shape[2]
+        if lookback_size is not None and int(lookback_size) != int(LOOKBACK_WINDOW):
+            return False
+        if feature_count is not None and int(feature_count) != len(feature_cols):
+            return False
+        return True
+    except Exception:
+        return False
+    finally:
+        if model is not None:
+            del model
+        tf.keras.backend.clear_session()
+
+
+def persist_final_artifacts(
+    loto_type,
+    raw_features,
+    targets,
+    feature_cols,
+    max_num,
+    epochs,
+    batch_size,
+    patience,
+    skip_final_train,
+    saved_calibration_method,
+    calibration_fraction,
+    calibration_min_samples,
+    calibration_max_samples,
+):
     model_path = os.path.join(MODEL_DIR, f"{loto_type}_prob.keras")
     scaler_path = os.path.join(MODEL_DIR, f"{loto_type}_scaler.pkl")
     existing_feature_cols = load_existing_feature_cols(loto_type)
     feature_cols_match = existing_feature_cols == feature_cols if existing_feature_cols is not None else False
-    artifacts_exist = os.path.exists(model_path) and os.path.exists(scaler_path)
+    artifacts_exist = existing_prediction_artifacts_match_feature_layout(model_path, scaler_path, feature_cols)
+    existing_calibrator_artifact, existing_calibrator_path = load_calibrator_artifact(
+        loto_type,
+        data_dir=DATA_DIR,
+        model_dir=MODEL_DIR,
+    )
+    existing_calibration_method = NO_CALIBRATION_METHOD
+    if isinstance(existing_calibrator_artifact, dict) and existing_calibrator_artifact.get("status") == "fitted":
+        existing_calibration_method = resolve_calibration_method(
+            existing_calibrator_artifact.get("method", NO_CALIBRATION_METHOD)
+        )
 
     save_feature_cols(loto_type, feature_cols)
 
-    if skip_final_train and artifacts_exist and feature_cols_match:
-        return "reused_existing_artifacts"
+    reuse_requested = (
+        skip_final_train
+        and artifacts_exist
+        and feature_cols_match
+        and (
+            saved_calibration_method == NO_CALIBRATION_METHOD
+            or existing_calibration_method == saved_calibration_method
+        )
+    )
+    if reuse_requested:
+        if saved_calibration_method == NO_CALIBRATION_METHOD:
+            remove_calibrator_artifacts(loto_type)
+        calibration_path = existing_calibrator_path if saved_calibration_method != NO_CALIBRATION_METHOD else None
+        return {
+            "status": "reused_existing_artifacts",
+            "requested_calibration_method": saved_calibration_method,
+            "effective_calibration_method": existing_calibration_method if calibration_path else NO_CALIBRATION_METHOD,
+            "calibration_artifact_path": calibration_path,
+            "calibrator_summary": summarize_calibrator_artifact(existing_calibrator_artifact)
+            if calibration_path
+            else summarize_calibrator_artifact(build_identity_calibrator_artifact()),
+        }
 
     effective_epochs = 0 if skip_final_train else epochs
-    final_scaler, final_model = train_final_model(
+    final_scaler, final_model, calibrator_artifact, calibration_fit_summary = train_final_model(
         raw_features=raw_features,
         targets=targets,
         max_num=max_num,
         epochs=effective_epochs,
         batch_size=batch_size,
         patience=patience,
+        saved_calibration_method=saved_calibration_method,
+        calibration_fraction=calibration_fraction,
+        calibration_min_samples=calibration_min_samples,
+        calibration_max_samples=calibration_max_samples,
     )
     final_model.save(model_path)
     with open(scaler_path, "wb") as handle:
         pickle.dump(final_scaler, handle)
+    calibration_artifact_path = None
+    if calibration_fit_summary["effective_calibration_method"] != NO_CALIBRATION_METHOD:
+        save_calibrator_artifact(loto_type, calibrator_artifact)
+        calibration_artifact_path = os.path.join(MODEL_DIR, get_calibrator_file_name(loto_type))
+    else:
+        remove_calibrator_artifacts(loto_type)
     del final_model
     tf.keras.backend.clear_session()
 
-    if skip_final_train:
-        return "initialized_without_training"
-    return "trained_on_full_data"
+    status = "initialized_without_training" if skip_final_train else "trained_on_full_data"
+    return {
+        "status": status,
+        "requested_calibration_method": saved_calibration_method,
+        "effective_calibration_method": calibration_fit_summary["effective_calibration_method"],
+        "calibration_artifact_path": calibration_artifact_path,
+        "calibrator_summary": calibration_fit_summary["calibrator_summary"],
+        "model_train_samples": calibration_fit_summary["model_train_samples"],
+        "calibration_samples": calibration_fit_summary["calibration_samples"],
+    }
 
 
 def get_git_commit():
@@ -741,6 +1184,9 @@ def build_training_context(args, loto_type, feature_cols, pick_count, max_num, d
         "loto_type": loto_type,
         "model_variant": args.model_variant,
         "evaluation_model_variants": list(args.evaluation_model_variants),
+        "saved_calibration_method_requested": args.saved_calibration_method,
+        "saved_calibration_method": NO_CALIBRATION_METHOD,
+        "evaluation_calibration_methods": list(args.evaluation_calibration_methods),
         "feature_strategy": dataset_metadata.get("feature_strategy"),
         "feature_channels": dataset_metadata.get("feature_channels"),
         "lookback_window": int(LOOKBACK_WINDOW),
@@ -755,6 +1201,11 @@ def build_training_context(args, loto_type, feature_cols, pick_count, max_num, d
             "final_epochs": args.final_epochs,
             "batch_size": args.batch_size,
             "patience": args.patience,
+            "calibration_fraction": args.calibration_fraction,
+            "calibration_min_samples": args.calibration_min_samples,
+            "calibration_max_samples": args.calibration_max_samples,
+            "calibration_num_bins": args.calibration_num_bins,
+            "ece_threshold": args.ece_threshold,
         },
         "flags": {
             "skip_final_train": bool(args.skip_final_train),
@@ -778,26 +1229,255 @@ def build_model_variant_payload(variant_name, dataset, legacy_holdout, walk_forw
     }
 
 
+def build_raw_calibration_method_entry(metrics):
+    return {
+        "method": NO_CALIBRATION_METHOD,
+        "label": get_calibration_method_label(NO_CALIBRATION_METHOD),
+        "status": "raw_model",
+        "status_usable": True,
+        "calibration_sample_count": 0,
+        "calibrator_summary": summarize_calibrator_artifact(build_identity_calibrator_artifact(status="disabled")),
+        "metrics": summarize_metrics_for_decision(metrics),
+        "calibration_summary": metrics.get("calibration_summary") or {},
+        "delta_vs_raw": build_metric_delta_summary(metrics, metrics),
+        "selected": False,
+        "eligible": True,
+        "guardrails": {
+            "logloss_non_worse": True,
+            "brier_non_worse": True,
+            "ece_not_worse": True,
+            "ece_within_threshold": True,
+            "ece_guardrail": True,
+        },
+    }
+
+
+def get_calibration_method_entry(selection, method_name):
+    if not selection:
+        return None
+    for row in selection.get("methods", []):
+        if row.get("method") == method_name:
+            return row
+    return None
+
+
+def build_calibration_selection_report(
+    variant_name,
+    legacy_holdout,
+    walk_forward,
+    evaluation_calibration_methods,
+    ece_threshold,
+):
+    source = "walk_forward" if walk_forward is not None else "legacy_holdout"
+    if walk_forward is not None:
+        raw_metrics = summary_entry_to_metrics(walk_forward["aggregate"]["model"])
+        aggregate_calibration_methods = (walk_forward.get("aggregate") or {}).get("calibration_methods") or {}
+        fold_count = len(walk_forward.get("folds", []))
+        method_payloads = {
+            method_name: {
+                "status": (
+                    "fitted"
+                    if int(((aggregate_calibration_methods.get(method_name) or {}).get("status_counts") or {}).get("fitted", 0)) > 0
+                    else "skipped"
+                ),
+                "status_counts": (aggregate_calibration_methods.get(method_name) or {}).get("status_counts"),
+                "calibration_sample_count": int(
+                    round(
+                        float(
+                            ((aggregate_calibration_methods.get(method_name) or {}).get("calibration_sample_summary") or {}).get(
+                                "mean", 0.0
+                            )
+                        )
+                    )
+                ),
+                "calibrator_summary": {
+                    "method": method_name,
+                    "status_counts": (aggregate_calibration_methods.get(method_name) or {}).get("status_counts"),
+                },
+                "metrics": summarize_metrics_for_decision(
+                    summary_entry_to_metrics(aggregate_calibration_methods.get(method_name) or metrics_to_summary_entry(raw_metrics))
+                ),
+                "calibration_summary": (aggregate_calibration_methods.get(method_name) or {}).get("calibration_summary") or {},
+                "delta_vs_raw": (aggregate_calibration_methods.get(method_name) or {}).get("delta_vs_raw")
+                or build_metric_delta_summary(raw_metrics, raw_metrics),
+            }
+            for method_name in evaluation_calibration_methods
+            if method_name != NO_CALIBRATION_METHOD and method_name in aggregate_calibration_methods
+        }
+    elif legacy_holdout is not None:
+        raw_metrics = legacy_holdout["model"]
+        fold_count = 1
+        method_payloads = {
+            method_name: {
+                "status": (payload or {}).get("status", "unknown"),
+                "status_counts": summarize_status_counts([(payload or {}).get("status")]),
+                "calibration_sample_count": int((payload or {}).get("calibration_sample_count", 0)),
+                "calibrator_summary": (payload or {}).get("calibrator_summary") or {"method": method_name},
+                "metrics": summarize_metrics_for_decision((payload or {}).get("test_metrics") or raw_metrics),
+                "calibration_summary": (((payload or {}).get("test_metrics") or {}).get("calibration_summary") or {}),
+                "delta_vs_raw": (payload or {}).get("delta_vs_raw") or build_metric_delta_summary(raw_metrics, raw_metrics),
+            }
+            for method_name, payload in ((legacy_holdout.get("calibration_methods") or {}).items())
+            if method_name != NO_CALIBRATION_METHOD
+        }
+    else:
+        raise ValueError(f"[{variant_name}] calibration selection requires walk-forward or legacy holdout results.")
+
+    raw_summary = summarize_metrics_for_decision(raw_metrics)
+    rows = [build_raw_calibration_method_entry(raw_metrics)]
+
+    for method_name in evaluation_calibration_methods:
+        if method_name == NO_CALIBRATION_METHOD:
+            continue
+
+        payload = method_payloads.get(method_name)
+        metrics = (payload or {}).get("metrics") or {}
+        status_counts = (payload or {}).get("status_counts") or {}
+        fitted_count = int(status_counts.get("fitted", 0))
+        status_usable = fitted_count > 0 or str((payload or {}).get("status")) == "fitted"
+        logloss_non_worse = (
+            None
+            if metrics.get("logloss") is None or raw_summary.get("logloss") is None
+            else bool(metrics["logloss"] <= raw_summary["logloss"] + EPSILON)
+        )
+        brier_non_worse = (
+            None
+            if metrics.get("brier") is None or raw_summary.get("brier") is None
+            else bool(metrics["brier"] <= raw_summary["brier"] + EPSILON)
+        )
+        ece_not_worse = (
+            None
+            if metrics.get("ece") is None or raw_summary.get("ece") is None
+            else bool(metrics["ece"] <= raw_summary["ece"] + EPSILON)
+        )
+        ece_within_threshold = None if metrics.get("ece") is None else bool(metrics["ece"] <= ece_threshold + EPSILON)
+        ece_guardrail = (
+            None
+            if ece_not_worse is None and ece_within_threshold is None
+            else bool(ece_not_worse or ece_within_threshold)
+        )
+        eligible = bool(
+            status_usable
+            and logloss_non_worse is True
+            and brier_non_worse is True
+            and ece_guardrail is True
+        )
+        rows.append(
+            {
+                "method": method_name,
+                "label": get_calibration_method_label(method_name),
+                "status": (payload or {}).get("status", "missing"),
+                "status_usable": status_usable,
+                "status_counts": status_counts or None,
+                "calibration_sample_count": int((payload or {}).get("calibration_sample_count", 0)),
+                "calibrator_summary": (payload or {}).get("calibrator_summary") or {"method": method_name},
+                "metrics": metrics,
+                "calibration_summary": (payload or {}).get("calibration_summary") or {},
+                "delta_vs_raw": (payload or {}).get("delta_vs_raw") or build_metric_delta_summary(raw_metrics, raw_metrics),
+                "selected": False,
+                "eligible": eligible,
+                "guardrails": {
+                    "logloss_non_worse": logloss_non_worse,
+                    "brier_non_worse": brier_non_worse,
+                    "ece_not_worse": ece_not_worse,
+                    "ece_within_threshold": ece_within_threshold,
+                    "ece_guardrail": ece_guardrail,
+                },
+            }
+        )
+
+    ranked_rows = sorted(
+        rows,
+        key=lambda item: (
+            not bool(item.get("eligible")),
+            float("inf") if (item.get("metrics") or {}).get("logloss") is None else float(item["metrics"]["logloss"]),
+            float("inf") if (item.get("metrics") or {}).get("brier") is None else float(item["metrics"]["brier"]),
+            float("inf") if (item.get("metrics") or {}).get("ece") is None else float(item["metrics"]["ece"]),
+            item.get("method") != NO_CALIBRATION_METHOD,
+        ),
+    )
+    recommended_entry = ranked_rows[0] if ranked_rows else rows[0]
+    recommended_method = recommended_entry["method"]
+    for row in rows:
+        row["selected"] = row["method"] == recommended_method
+
+    reason_codes = []
+    if recommended_method == NO_CALIBRATION_METHOD:
+        reason_codes.append("retain_raw_probabilities")
+        if any(row.get("method") != NO_CALIBRATION_METHOD and not row.get("eligible") for row in rows):
+            reason_codes.append("all_posthoc_methods_failed_guardrails")
+    else:
+        reason_codes.append(f"select_{recommended_method}_for_{variant_name}")
+
+    return {
+        "variant": variant_name,
+        "source": source,
+        "fold_count": int(fold_count),
+        "raw_method": NO_CALIBRATION_METHOD,
+        "raw_label": get_calibration_method_label(NO_CALIBRATION_METHOD),
+        "raw_metrics": raw_summary,
+        "recommended_method": recommended_method,
+        "recommended_label": get_calibration_method_label(recommended_method),
+        "recommended_metrics": recommended_entry.get("metrics") or {},
+        "recommended_delta_vs_raw": recommended_entry.get("delta_vs_raw") or build_metric_delta_summary(raw_metrics, raw_metrics),
+        "ece_threshold": float(ece_threshold),
+        "rule": {
+            "selection_policy": "pick the lowest-logloss usable calibration method subject to guardrails; otherwise keep raw probabilities",
+            "guardrails": [
+                "post-calibration logloss must not worsen vs raw",
+                "post-calibration brier must not worsen vs raw",
+                "ECE must improve vs raw or stay within ece_threshold",
+                "non-identity post-hoc methods must be fitted on the calibration split",
+            ],
+        },
+        "reason_codes": reason_codes,
+        "methods": rows,
+    }
+
+
 def rank_model_variants_by_logloss(model_variant_reports):
     rankings = []
     for variant_name, payload in model_variant_reports.items():
-        walk_forward = payload.get("walk_forward")
-        if walk_forward is not None:
-            logloss_mean = ((walk_forward["aggregate"]["model"]["metric_summary"]["logloss"]).get("mean"))
-        else:
-            legacy_holdout = payload.get("legacy_holdout")
-            logloss_mean = legacy_holdout["model"]["logloss"] if legacy_holdout else None
+        calibration_selection = payload.get("calibration_selection") or {}
+        logloss_mean = (calibration_selection.get("recommended_metrics") or {}).get("logloss")
+        if logloss_mean is None:
+            walk_forward = payload.get("walk_forward")
+            if walk_forward is not None:
+                logloss_mean = ((walk_forward["aggregate"]["model"]["metric_summary"]["logloss"]).get("mean"))
+            else:
+                legacy_holdout = payload.get("legacy_holdout")
+                logloss_mean = legacy_holdout["model"]["logloss"] if legacy_holdout else None
         rankings.append(
             {
                 "variant": variant_name,
                 "label": get_model_variant_label(variant_name),
                 "logloss_mean": logloss_mean,
+                "calibration_method": calibration_selection.get("recommended_method", NO_CALIBRATION_METHOD),
             }
         )
     return sorted(rankings, key=lambda item: float("inf") if item["logloss_mean"] is None else item["logloss_mean"])
 
 
-def build_statistical_tests(model_variant_reports, comparison_payloads, alpha, bootstrap_samples, permutation_samples, seed):
+def select_comparison_prediction_stream(variant_name, comparison_payloads, calibration_selections):
+    payload = comparison_payloads[variant_name]
+    selection = calibration_selections.get(variant_name) or {}
+    selected_method = resolve_calibration_method(selection.get("recommended_method", NO_CALIBRATION_METHOD))
+    if selected_method != NO_CALIBRATION_METHOD:
+        calibrated_preds = (payload.get("calibration_method_preds") or {}).get(selected_method)
+        if calibrated_preds is not None:
+            return calibrated_preds, selected_method
+    return payload["model_preds"], NO_CALIBRATION_METHOD
+
+
+def build_statistical_tests(
+    model_variant_reports,
+    comparison_payloads,
+    calibration_selections,
+    alpha,
+    bootstrap_samples,
+    permutation_samples,
+    seed,
+):
     if not comparison_payloads:
         return None
 
@@ -813,10 +1493,17 @@ def build_statistical_tests(model_variant_reports, comparison_payloads, alpha, b
         reference_targets,
     )
     comparisons = {}
+    selected_calibration_methods = {}
 
     if LEGACY_MODEL_VARIANT in comparison_payloads:
-        comparisons["legacy_vs_best_static"] = build_logloss_comparison_summary(
-            calculate_per_draw_logloss(comparison_payloads[LEGACY_MODEL_VARIANT]["model_preds"], reference_targets),
+        legacy_preds, legacy_method = select_comparison_prediction_stream(
+            LEGACY_MODEL_VARIANT,
+            comparison_payloads,
+            calibration_selections,
+        )
+        selected_calibration_methods[LEGACY_MODEL_VARIANT] = legacy_method
+        legacy_vs_best_static = build_logloss_comparison_summary(
+            calculate_per_draw_logloss(legacy_preds, reference_targets),
             best_static_losses,
             candidate_name=LEGACY_MODEL_VARIANT,
             reference_name=f"static_baseline:{best_static_name}",
@@ -825,10 +1512,19 @@ def build_statistical_tests(model_variant_reports, comparison_payloads, alpha, b
             n_permutations=permutation_samples,
             seed=seed,
         )
+        legacy_vs_best_static["candidate_calibration_method"] = legacy_method
+        legacy_vs_best_static["reference_calibration_method"] = NO_CALIBRATION_METHOD
+        comparisons["legacy_vs_best_static"] = legacy_vs_best_static
 
     if MULTIHOT_MODEL_VARIANT in comparison_payloads:
-        comparisons["multihot_vs_best_static"] = build_logloss_comparison_summary(
-            calculate_per_draw_logloss(comparison_payloads[MULTIHOT_MODEL_VARIANT]["model_preds"], reference_targets),
+        multihot_preds, multihot_method = select_comparison_prediction_stream(
+            MULTIHOT_MODEL_VARIANT,
+            comparison_payloads,
+            calibration_selections,
+        )
+        selected_calibration_methods[MULTIHOT_MODEL_VARIANT] = multihot_method
+        multihot_vs_best_static = build_logloss_comparison_summary(
+            calculate_per_draw_logloss(multihot_preds, reference_targets),
             best_static_losses,
             candidate_name=MULTIHOT_MODEL_VARIANT,
             reference_name=f"static_baseline:{best_static_name}",
@@ -837,11 +1533,26 @@ def build_statistical_tests(model_variant_reports, comparison_payloads, alpha, b
             n_permutations=permutation_samples,
             seed=seed,
         )
+        multihot_vs_best_static["candidate_calibration_method"] = multihot_method
+        multihot_vs_best_static["reference_calibration_method"] = NO_CALIBRATION_METHOD
+        comparisons["multihot_vs_best_static"] = multihot_vs_best_static
 
     if LEGACY_MODEL_VARIANT in comparison_payloads and MULTIHOT_MODEL_VARIANT in comparison_payloads:
-        comparisons["multihot_vs_legacy"] = build_logloss_comparison_summary(
-            calculate_per_draw_logloss(comparison_payloads[MULTIHOT_MODEL_VARIANT]["model_preds"], reference_targets),
-            calculate_per_draw_logloss(comparison_payloads[LEGACY_MODEL_VARIANT]["model_preds"], reference_targets),
+        legacy_preds, legacy_method = select_comparison_prediction_stream(
+            LEGACY_MODEL_VARIANT,
+            comparison_payloads,
+            calibration_selections,
+        )
+        multihot_preds, multihot_method = select_comparison_prediction_stream(
+            MULTIHOT_MODEL_VARIANT,
+            comparison_payloads,
+            calibration_selections,
+        )
+        selected_calibration_methods[LEGACY_MODEL_VARIANT] = legacy_method
+        selected_calibration_methods[MULTIHOT_MODEL_VARIANT] = multihot_method
+        multihot_vs_legacy = build_logloss_comparison_summary(
+            calculate_per_draw_logloss(multihot_preds, reference_targets),
+            calculate_per_draw_logloss(legacy_preds, reference_targets),
             candidate_name=MULTIHOT_MODEL_VARIANT,
             reference_name=LEGACY_MODEL_VARIANT,
             confidence=1.0 - alpha,
@@ -849,26 +1560,50 @@ def build_statistical_tests(model_variant_reports, comparison_payloads, alpha, b
             n_permutations=permutation_samples,
             seed=seed,
         )
+        multihot_vs_legacy["candidate_calibration_method"] = multihot_method
+        multihot_vs_legacy["reference_calibration_method"] = legacy_method
+        comparisons["multihot_vs_legacy"] = multihot_vs_legacy
 
     return {
         "metric": "per_draw_logloss",
         "test_source": "walk_forward_predictions",
+        "comparison_mode": "selected_calibration_method_per_variant",
         "best_static_baseline_name": best_static_name,
+        "selected_calibration_methods": selected_calibration_methods,
         "alpha": alpha,
         "comparisons": comparisons,
     }
 
 
-def build_adoption_decision(model_variant_reports, statistical_tests, production_variant, alpha):
+def build_adoption_decision(
+    model_variant_reports,
+    calibration_selections,
+    statistical_tests,
+    production_variant,
+    production_calibration_method,
+    alpha,
+    ece_threshold,
+):
     rankings = rank_model_variants_by_logloss(model_variant_reports)
     recommended_variant = production_variant
+    candidate_selection = calibration_selections.get(MULTIHOT_MODEL_VARIANT) or {}
+    candidate_selected_metrics = candidate_selection.get("recommended_metrics") or {}
+    candidate_raw_metrics = candidate_selection.get("raw_metrics") or {}
+    candidate_selected_method = candidate_selection.get("recommended_method", NO_CALIBRATION_METHOD)
+    recommended_calibration_method = (
+        (calibration_selections.get(production_variant) or {}).get("recommended_method", production_calibration_method)
+    )
     decision_flags = {
         "beats_best_static_with_ci": False,
         "beats_best_static_with_p_value": False,
         "beats_legacy_with_ci": False,
         "beats_legacy_with_p_value": False,
+        "calibration_logloss_non_worse": False,
+        "calibration_brier_non_worse": False,
+        "calibration_ece_guardrail": False,
     }
     reason_codes = []
+    reason_summary = []
 
     comparisons = (statistical_tests or {}).get("comparisons") or {}
     multihot_vs_best_static = comparisons.get("multihot_vs_best_static")
@@ -890,17 +1625,58 @@ def build_adoption_decision(model_variant_reports, statistical_tests, production
         decision_flags["beats_legacy_with_ci"] = ci.get("upper") is not None and ci["upper"] < 0.0
         decision_flags["beats_legacy_with_p_value"] = p_value is not None and p_value < alpha
 
-    should_promote_multihot = all(decision_flags.values())
+    if candidate_selected_metrics:
+        decision_flags["calibration_logloss_non_worse"] = (
+            candidate_selected_metrics.get("logloss") is not None
+            and candidate_raw_metrics.get("logloss") is not None
+            and candidate_selected_metrics["logloss"] <= candidate_raw_metrics["logloss"] + EPSILON
+        )
+        decision_flags["calibration_brier_non_worse"] = (
+            candidate_selected_metrics.get("brier") is not None
+            and candidate_raw_metrics.get("brier") is not None
+            and candidate_selected_metrics["brier"] <= candidate_raw_metrics["brier"] + EPSILON
+        )
+        decision_flags["calibration_ece_guardrail"] = bool(
+            candidate_selected_metrics.get("ece") is not None
+            and (
+                (
+                    candidate_raw_metrics.get("ece") is not None
+                    and candidate_selected_metrics["ece"] <= candidate_raw_metrics["ece"] + EPSILON
+                )
+                or candidate_selected_metrics["ece"] <= ece_threshold + EPSILON
+            )
+        )
+    else:
+        reason_codes.append("candidate_calibration_metrics_missing")
+
+    should_promote_multihot = all(value is True for value in decision_flags.values())
     if should_promote_multihot:
         recommended_variant = MULTIHOT_MODEL_VARIANT
+        recommended_calibration_method = candidate_selected_method
         reason_codes.append("promote_multihot")
+        reason_summary.append(
+            "multihot が best static / legacy に対する統計条件を満たし、選択された calibration も logloss・Brier・ECE guardrail を満たしました。"
+        )
     else:
         reason_codes.append(f"retain_production_variant:{production_variant}")
+        if not decision_flags["beats_best_static_with_ci"] or not decision_flags["beats_best_static_with_p_value"]:
+            reason_summary.append("best static baseline に対する統計的優位が十分ではありません。")
+        if not decision_flags["beats_legacy_with_ci"] or not decision_flags["beats_legacy_with_p_value"]:
+            reason_summary.append("legacy に対する統計的優位が十分ではありません。")
+        if not decision_flags["calibration_logloss_non_worse"]:
+            reason_summary.append("候補 calibration 後の logloss が raw を明確に改善または維持できていません。")
+        if not decision_flags["calibration_brier_non_worse"]:
+            reason_summary.append("候補 calibration 後の Brier が raw より悪化しています。")
+        if not decision_flags["calibration_ece_guardrail"]:
+            reason_summary.append("候補 calibration 後の ECE が許容範囲を満たしていません。")
 
     return {
         "candidate_variant": MULTIHOT_MODEL_VARIANT,
+        "candidate_calibration_method": candidate_selected_method,
         "production_variant": production_variant,
+        "production_saved_calibration_method": production_calibration_method,
         "recommended_variant": recommended_variant,
+        "recommended_calibration_method": recommended_calibration_method,
         "best_variant_by_logloss": rankings[0]["variant"] if rankings else None,
         "rankings": rankings,
         "metric": "logloss",
@@ -908,10 +1684,16 @@ def build_adoption_decision(model_variant_reports, statistical_tests, production
         "rule": {
             "multihot_vs_best_static": "bootstrap_ci.upper < 0 and permutation_test.p_value < alpha",
             "multihot_vs_legacy": "bootstrap_ci.upper < 0 and permutation_test.p_value < alpha",
+            "candidate_calibration": (
+                "selected calibration must keep post-calibration logloss/brier non-worse vs raw, "
+                "and ECE must improve vs raw or stay <= ece_threshold"
+            ),
         },
         "flags": decision_flags,
         "should_promote_candidate": should_promote_multihot,
         "reason_codes": reason_codes,
+        "reason_summary": reason_summary,
+        "ece_threshold": ece_threshold,
     }
 
 
@@ -954,6 +1736,17 @@ def select_primary_evaluation(legacy_holdout, walk_forward_report):
     raise ValueError("manifest 生成には少なくとも1つの評価結果が必要です。")
 
 
+def build_metric_snapshot(metric_summary):
+    if not metric_summary:
+        return {}
+    return {
+        "logloss": metric_summary.get("logloss"),
+        "brier": metric_summary.get("brier"),
+        "ece": metric_summary.get("ece"),
+        "sample_count": metric_summary.get("sample_count"),
+    }
+
+
 def build_manifest(
     loto_type,
     df,
@@ -976,6 +1769,8 @@ def build_manifest(
     runtime_environment,
 ):
     primary_evaluation = select_primary_evaluation(legacy_holdout, walk_forward_report)
+    primary_variant_payload = model_variant_reports.get(training_context.get("model_variant")) or {}
+    primary_calibration_selection = primary_variant_payload.get("calibration_selection") or {}
     model_summary = primary_evaluation["model_summary"]
     static_summary = primary_evaluation["static_summary"]
     best_static_name = min(
@@ -987,15 +1782,58 @@ def build_manifest(
     primary_model = {
         "logloss_mean": model_summary["logloss"]["mean"],
         "brier_mean": model_summary["brier"]["mean"],
+        "ece": ((model_summary.get("ece") or {}).get("mean")),
         "mean_overlap_top_k_mean": model_summary["mean_overlap_top_k"]["mean"],
+    }
+    pre_calibration_summary = primary_calibration_selection.get("raw_metrics") or {
+        "logloss": primary_model.get("logloss_mean"),
+        "brier": primary_model.get("brier_mean"),
+        "ece": primary_model.get("ece"),
+        "sample_count": None,
+    }
+    selected_calibration_summary = primary_calibration_selection.get("recommended_metrics") or pre_calibration_summary
+    saved_calibration_method = training_context.get("saved_calibration_method", NO_CALIBRATION_METHOD)
+    saved_calibration_entry = get_calibration_method_entry(primary_calibration_selection, saved_calibration_method)
+    saved_calibration_summary = (
+        (saved_calibration_entry or {}).get("metrics")
+        or (selected_calibration_summary if saved_calibration_method == primary_calibration_selection.get("recommended_method") else pre_calibration_summary)
+    )
+    calibration_section = {
+        "enabled": saved_calibration_method != NO_CALIBRATION_METHOD,
+        "requested_method": training_context.get("saved_calibration_method_requested", NO_CALIBRATION_METHOD),
+        "saved_method": saved_calibration_method,
+        "recommended_method": primary_calibration_selection.get("recommended_method", NO_CALIBRATION_METHOD),
+        "evaluation_methods": training_context.get("evaluation_calibration_methods") or [],
+        "artifact_path": final_artifact_status.get("calibration_artifact_path"),
+        "summary": {
+            "source": primary_calibration_selection.get("source"),
+            "raw_metrics": pre_calibration_summary,
+            "recommended_metrics": selected_calibration_summary,
+            "recommended_delta_vs_raw": primary_calibration_selection.get("recommended_delta_vs_raw"),
+            "reason_codes": primary_calibration_selection.get("reason_codes") or [],
+        },
     }
     metrics_summary = {
         "evaluation_source": primary_evaluation["source"],
         "fold_count": primary_evaluation["fold_count"],
         "test_window": primary_evaluation["test_window"],
         "saved_model_variant": training_context.get("model_variant"),
+        "saved_calibration_method": saved_calibration_method,
         "recommended_model_variant": (decision_summary or {}).get("recommended_variant"),
+        "recommended_calibration_method": (decision_summary or {}).get(
+            "recommended_calibration_method",
+            primary_calibration_selection.get("recommended_method", NO_CALIBRATION_METHOD),
+        ),
         "primary_model": primary_model,
+        "selected_calibration_model": selected_calibration_summary,
+        "saved_production_model": saved_calibration_summary,
+        "pre_calibration_logloss": pre_calibration_summary.get("logloss"),
+        "post_calibration_logloss": selected_calibration_summary.get("logloss"),
+        "pre_calibration_brier": pre_calibration_summary.get("brier"),
+        "post_calibration_brier": selected_calibration_summary.get("brier"),
+        "pre_calibration_ece": pre_calibration_summary.get("ece"),
+        "post_calibration_ece": selected_calibration_summary.get("ece"),
+        "calibration_summary": calibration_section["summary"],
         "walk_forward_model": primary_model if primary_evaluation["source"] == "walk_forward" else None,
         "best_static_baseline": {
             "name": best_static_name,
@@ -1018,6 +1856,8 @@ def build_manifest(
         "scaler": scaler_path,
         "feature_cols": feature_cols_path,
     }
+    if final_artifact_status.get("calibration_artifact_path"):
+        artifact_paths["calibrator"] = final_artifact_status["calibration_artifact_path"]
 
     return {
         "schema_version": MANIFEST_SCHEMA_VERSION,
@@ -1030,12 +1870,17 @@ def build_manifest(
         "data_fingerprint": data_fingerprint,
         "training_context": training_context,
         "runtime_environment": runtime_environment,
+        "calibration": calibration_section,
         "metrics_summary": metrics_summary,
         "model_variants": {
             variant_name: {
                 "label": payload.get("label"),
                 "feature_strategy": payload.get("feature_strategy"),
                 "feature_column_count": payload.get("feature_column_count"),
+                "selected_evaluation_calibration_method": (
+                    (payload.get("calibration_selection") or {}).get("recommended_method", NO_CALIBRATION_METHOD)
+                ),
+                "selected_evaluation_metrics": (payload.get("calibration_selection") or {}).get("recommended_metrics"),
                 "final_artifact_status": payload.get("final_artifact_status"),
             }
             for variant_name, payload in model_variant_reports.items()
@@ -1110,7 +1955,16 @@ def train_for_type(loto_type, args):
         else:
             holdout_split = max(int(len(targets) * 0.8), args.walk_forward_test_window)
             holdout_split = min(holdout_split, len(targets) - args.walk_forward_test_window)
-            variant_legacy_holdout, _, _, _, _, _, legacy_history_records = evaluate_split(
+            (
+                variant_legacy_holdout,
+                _,
+                _,
+                _,
+                _,
+                _,
+                legacy_history_records,
+                _,
+            ) = evaluate_split(
                 df=df,
                 raw_features=raw_features,
                 targets=targets,
@@ -1123,6 +1977,11 @@ def train_for_type(loto_type, args):
                 epochs=args.eval_epochs,
                 batch_size=args.batch_size,
                 patience=args.patience,
+                evaluation_calibration_methods=args.evaluation_calibration_methods,
+                calibration_fraction=args.calibration_fraction,
+                calibration_min_samples=args.calibration_min_samples,
+                calibration_max_samples=args.calibration_max_samples,
+                calibration_num_bins=args.calibration_num_bins,
                 evaluation_mode="legacy_holdout",
             )
             prediction_history_records.extend(legacy_history_records)
@@ -1145,6 +2004,11 @@ def train_for_type(loto_type, args):
                 epochs=args.eval_epochs,
                 batch_size=args.batch_size,
                 patience=args.patience,
+                evaluation_calibration_methods=args.evaluation_calibration_methods,
+                calibration_fraction=args.calibration_fraction,
+                calibration_min_samples=args.calibration_min_samples,
+                calibration_max_samples=args.calibration_max_samples,
+                calibration_num_bins=args.calibration_num_bins,
             )
             walk_forward_comparison_payloads[variant_name] = comparison_payload
             prediction_history_records.extend(walk_forward_history_records)
@@ -1155,6 +2019,20 @@ def train_for_type(loto_type, args):
             legacy_holdout=variant_legacy_holdout,
             walk_forward=variant_walk_forward,
         )
+
+    calibration_selections = {}
+    for variant_name, payload in model_variant_reports.items():
+        calibration_selection = build_calibration_selection_report(
+            variant_name=variant_name,
+            legacy_holdout=payload.get("legacy_holdout"),
+            walk_forward=payload.get("walk_forward"),
+            evaluation_calibration_methods=args.evaluation_calibration_methods,
+            ece_threshold=args.ece_threshold,
+        )
+        calibration_selections[variant_name] = calibration_selection
+        payload["calibration_selection"] = calibration_selection
+        payload["selected_evaluation_calibration_method"] = calibration_selection.get("recommended_method")
+        payload["selected_evaluation_metrics"] = calibration_selection.get("recommended_metrics")
 
     production_dataset = prepared_datasets[args.model_variant]
     raw_features = production_dataset["raw_features"]
@@ -1179,6 +2057,7 @@ def train_for_type(loto_type, args):
         statistical_tests = build_statistical_tests(
             model_variant_reports=model_variant_reports,
             comparison_payloads=walk_forward_comparison_payloads,
+            calibration_selections=calibration_selections,
             alpha=args.statistical_alpha,
             bootstrap_samples=args.bootstrap_samples,
             permutation_samples=args.permutation_samples,
@@ -1186,49 +2065,14 @@ def train_for_type(loto_type, args):
         )
     decision_summary = build_adoption_decision(
         model_variant_reports=model_variant_reports,
+        calibration_selections=calibration_selections,
         statistical_tests=statistical_tests,
         production_variant=args.model_variant,
+        production_calibration_method=args.saved_calibration_method,
         alpha=args.statistical_alpha,
+        ece_threshold=args.ece_threshold,
     )
-
-    report = {
-        "schema_version": EVAL_REPORT_SCHEMA_VERSION,
-        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
-        "bundle_id": bundle_id,
-        "generated_at": generated_at,
-        "loto_type": loto_type,
-        "lookback_window": LOOKBACK_WINDOW,
-        "data_fingerprint": data_fingerprint,
-        "training_context": training_context,
-        "runtime_environment": runtime_environment,
-        "run_options": {
-            "preset": args.preset,
-            "seed": args.seed,
-            "model_variant": args.model_variant,
-            "evaluation_model_variants": args.evaluation_model_variants,
-            "skip_final_train": args.skip_final_train,
-            "skip_legacy_holdout": args.skip_legacy_holdout,
-            "skip_walk_forward": args.skip_walk_forward,
-            "walk_forward_folds": args.walk_forward_folds,
-            "eval_epochs": args.eval_epochs,
-            "final_epochs": args.final_epochs,
-            "batch_size": args.batch_size,
-            "patience": args.patience,
-            "bootstrap_samples": args.bootstrap_samples,
-            "permutation_samples": args.permutation_samples,
-            "statistical_alpha": args.statistical_alpha,
-        },
-        "Model (LSTM)": compat_model_metrics,
-        "Baselines": compat_static_baselines,
-        "Online Baselines": compat_online_baselines,
-        "legacy_holdout": legacy_holdout,
-        "walk_forward": walk_forward,
-        "model_variants": model_variant_reports,
-        "statistical_tests": statistical_tests,
-        "decision_summary": decision_summary,
-    }
     eval_report_path = os.path.join(DATA_DIR, f"eval_report_{loto_type}.json")
-    save_json(eval_report_path, report)
     prediction_history_path = os.path.join(DATA_DIR, f"prediction_history_{loto_type}.json")
     save_json(
         prediction_history_path,
@@ -1257,9 +2101,76 @@ def train_for_type(loto_type, args):
         batch_size=args.batch_size,
         patience=args.patience,
         skip_final_train=args.skip_final_train,
+        saved_calibration_method=args.saved_calibration_method,
+        calibration_fraction=args.calibration_fraction,
+        calibration_min_samples=args.calibration_min_samples,
+        calibration_max_samples=args.calibration_max_samples,
+    )
+    training_context["saved_calibration_method"] = final_artifact_status.get(
+        "effective_calibration_method",
+        NO_CALIBRATION_METHOD,
+    )
+    training_context["saved_calibration_method_label"] = get_calibration_method_label(training_context["saved_calibration_method"])
+    training_context["calibration_enabled"] = training_context["saved_calibration_method"] != NO_CALIBRATION_METHOD
+    training_context["calibration_artifact_path"] = final_artifact_status.get("calibration_artifact_path")
+    training_context["selected_evaluation_calibration_method"] = (
+        (primary_variant_payload.get("calibration_selection") or {}).get("recommended_method", NO_CALIBRATION_METHOD)
+    )
+    training_context["selected_evaluation_calibration_method_label"] = get_calibration_method_label(
+        training_context["selected_evaluation_calibration_method"]
     )
     model_variant_reports[args.model_variant]["final_artifact_status"] = final_artifact_status
-    report["model_variants"][args.model_variant]["final_artifact_status"] = final_artifact_status
+
+    report = {
+        "schema_version": EVAL_REPORT_SCHEMA_VERSION,
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "bundle_id": bundle_id,
+        "generated_at": generated_at,
+        "loto_type": loto_type,
+        "lookback_window": LOOKBACK_WINDOW,
+        "data_fingerprint": data_fingerprint,
+        "training_context": training_context,
+        "runtime_environment": runtime_environment,
+        "run_options": {
+            "preset": args.preset,
+            "seed": args.seed,
+            "model_variant": args.model_variant,
+            "evaluation_model_variants": args.evaluation_model_variants,
+            "saved_calibration_method": args.saved_calibration_method,
+            "evaluation_calibration_methods": args.evaluation_calibration_methods,
+            "skip_final_train": args.skip_final_train,
+            "skip_legacy_holdout": args.skip_legacy_holdout,
+            "skip_walk_forward": args.skip_walk_forward,
+            "walk_forward_folds": args.walk_forward_folds,
+            "eval_epochs": args.eval_epochs,
+            "final_epochs": args.final_epochs,
+            "batch_size": args.batch_size,
+            "patience": args.patience,
+            "bootstrap_samples": args.bootstrap_samples,
+            "permutation_samples": args.permutation_samples,
+            "statistical_alpha": args.statistical_alpha,
+            "calibration_fraction": args.calibration_fraction,
+            "calibration_min_samples": args.calibration_min_samples,
+            "calibration_max_samples": args.calibration_max_samples,
+            "calibration_num_bins": args.calibration_num_bins,
+            "ece_threshold": args.ece_threshold,
+        },
+        "calibration": {
+            "saved_calibration_method_requested": args.saved_calibration_method,
+            "saved_calibration_method": training_context["saved_calibration_method"],
+            "evaluation_calibration_methods": args.evaluation_calibration_methods,
+            "calibration_artifact_path": final_artifact_status.get("calibration_artifact_path"),
+        },
+        "Model (LSTM)": compat_model_metrics,
+        "Baselines": compat_static_baselines,
+        "Online Baselines": compat_online_baselines,
+        "legacy_holdout": legacy_holdout,
+        "walk_forward": walk_forward,
+        "model_variants": model_variant_reports,
+        "calibration_evaluation": calibration_selections,
+        "statistical_tests": statistical_tests,
+        "decision_summary": decision_summary,
+    }
     save_json(eval_report_path, report)
 
     print("  [4/4] manifest を生成中...")
@@ -1291,7 +2202,8 @@ def train_for_type(loto_type, args):
         "✅ 完了 "
         f"(LogLoss: {primary_metrics['logloss']:.4f}, "
         f"Top-k: {primary_metrics['mean_overlap_top_k']:.2f}, "
-        f"final_artifact_status: {final_artifact_status})"
+        f"saved_calibration={training_context['saved_calibration_method']}, "
+        f"final_artifact_status: {final_artifact_status['status']})"
     )
     return True
 
@@ -1306,6 +2218,16 @@ def parse_args():
         default="legacy,multihot",
         help="評価対象 variant をカンマ区切りで指定 (例: legacy,multihot)",
     )
+    parser.add_argument(
+        "--saved_calibration_method",
+        choices=sorted(CALIBRATION_METHOD_CHOICES),
+        default=DEFAULT_SAVED_CALIBRATION_METHOD,
+    )
+    parser.add_argument(
+        "--evaluation_calibration_methods",
+        default=DEFAULT_EVALUATION_CALIBRATION_METHODS,
+        help="評価対象 calibration method をカンマ区切りで指定 (例: none,temperature,isotonic)",
+    )
     parser.add_argument("--initial_train_fraction", type=float, default=DEFAULT_INITIAL_TRAIN_FRACTION)
     parser.add_argument("--walk_forward_test_window", type=int, default=DEFAULT_WALK_FORWARD_TEST_WINDOW)
     parser.add_argument("--walk_forward_folds", type=int, default=None)
@@ -1316,6 +2238,11 @@ def parse_args():
     parser.add_argument("--bootstrap_samples", type=int, default=DEFAULT_BOOTSTRAP_SAMPLES)
     parser.add_argument("--permutation_samples", type=int, default=DEFAULT_PERMUTATION_SAMPLES)
     parser.add_argument("--statistical_alpha", type=float, default=DEFAULT_STATISTICAL_ALPHA)
+    parser.add_argument("--calibration_fraction", type=float, default=DEFAULT_CALIBRATION_FRACTION)
+    parser.add_argument("--calibration_min_samples", type=int, default=DEFAULT_CALIBRATION_MIN_SAMPLES)
+    parser.add_argument("--calibration_max_samples", type=int, default=DEFAULT_CALIBRATION_MAX_SAMPLES)
+    parser.add_argument("--calibration_num_bins", type=int, default=DEFAULT_CALIBRATION_NUM_BINS)
+    parser.add_argument("--ece_threshold", type=float, default=DEFAULT_ECE_THRESHOLD)
     parser.add_argument("--skip_final_train", action="store_true")
     parser.add_argument("--skip_legacy_holdout", action="store_true")
     parser.add_argument("--skip_walk_forward", action="store_true")
@@ -1327,6 +2254,11 @@ def main():
     args = apply_preset(parse_args())
     args.model_variant = resolve_model_variant(args.model_variant)
     args.evaluation_model_variants = resolve_evaluation_model_variants(args)
+    args.saved_calibration_method = resolve_calibration_method(args.saved_calibration_method)
+    args.evaluation_calibration_methods = resolve_evaluation_calibration_methods(
+        args.saved_calibration_method,
+        args.evaluation_calibration_methods,
+    )
     if args.skip_legacy_holdout and args.skip_walk_forward:
         raise SystemExit("legacy_holdout と walk_forward を同時に skip することはできません。")
     set_reproducible_seed(args.seed)

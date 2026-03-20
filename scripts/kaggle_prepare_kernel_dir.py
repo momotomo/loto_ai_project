@@ -12,10 +12,12 @@ from pathlib import Path
 PAYLOAD_PLACEHOLDER = "__KAGGLE_PAYLOAD_BASE64__"
 ROOT_FILES = [
     "artifact_utils.py",
+    "calibration_utils.py",
     "evaluation_statistics.py",
     "config.py",
     "data_collector.py",
     "model_variants.py",
+    "report_utils.py",
     "train_prob_model.py",
     "predict.py",
     "update_system.py",
@@ -33,6 +35,8 @@ def parse_args():
     parser.add_argument("--train-preset", default="fast")
     parser.add_argument("--model-variant", default="legacy")
     parser.add_argument("--evaluation-model-variants", default="legacy,multihot")
+    parser.add_argument("--saved-calibration-method", default="none")
+    parser.add_argument("--evaluation-calibration-methods", default="none,temperature,isotonic")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--skip-legacy-holdout", action="store_true")
     return parser.parse_args()
@@ -69,6 +73,8 @@ def build_run_config(args):
         "train_preset": args.train_preset,
         "model_variant": args.model_variant,
         "evaluation_model_variants": args.evaluation_model_variants,
+        "saved_calibration_method": args.saved_calibration_method,
+        "evaluation_calibration_methods": args.evaluation_calibration_methods,
         "seed": args.seed,
         "skip_legacy_holdout": args.skip_legacy_holdout,
     }

@@ -46,6 +46,7 @@
   - `models/{loto_type}_prob.keras`
   - `models/{loto_type}_scaler.pkl`
   - `data/{loto_type}_feature_cols.json` または `models/{loto_type}_feature_cols.json`
+  - `saved_calibration_method != none` の場合は `data/{loto_type}_calibrator.json` または `models/{loto_type}_calibrator.json`
 - 復旧:
   - `python train_prob_model.py --loto_type loto6` を再実行する。
   - Kaggle 利用時は同期をやり直す。
@@ -66,6 +67,7 @@
 - 確認:
   - scaler が train only fit になっているか
   - fold の train/test 境界が時系列順か
+  - calibration split が train 末尾だけで構成されているか
   - `walk_forward.aggregate` の平均と fold 個別成績が整合しているか
   - leak-free 評価と final の全データ fit を混同していないか
 - 復旧:
@@ -89,6 +91,7 @@
   - 失敗したステップのスクリプトを単体で実行する。
   - `data_collector.py` → `train_prob_model.py` → `predict.py` の順で個別に確認する。
   - network 要因を切り分けたい場合は `venv/bin/python update_system.py --loto_type loto6 --train_preset smoke --skip_final_train --skip_data_refresh` を使う。
+  - `skip_final_train` で再利用したい場合でも、model/scaler/feature_cols の入力次元が揃わないと再利用せず雛形へ切り替わる。variant を切り替えた直後はこの挙動が正常。
 
 ## 実験の再現 run を残したい
 - 症状: どの config / source / artifact で実験したかを run 単位で残したい。
@@ -155,8 +158,8 @@
 - 確認:
   - workflow の `Debug build directory` ステップで `kernel-metadata.json` の `code_file` が `script.py` を指す前提になっているか
   - `script.py size_bytes=` が極端に小さくないか
-  - build dir の `run_config.json` が対象ロトと preset / model_variant / evaluation_model_variants を正しく持っているか
-  - Kaggle ログの `[kaggle-entry] listing for /kaggle/working/app` に `data_collector.py` / `train_prob_model.py` / `model_variants.py` / `evaluation_statistics.py` / `run_config.json` が出ているか
+  - build dir の `run_config.json` が対象ロトと preset / model_variant / evaluation_model_variants / evaluation_calibration_methods を正しく持っているか
+  - Kaggle ログの `[kaggle-entry] listing for /kaggle/working/app` に `data_collector.py` / `train_prob_model.py` / `model_variants.py` / `evaluation_statistics.py` / `calibration_utils.py` / `report_utils.py` / `run_config.json` が出ているか
 - 復旧:
   - `scripts/kaggle_prepare_kernel_dir.py` の payload allowlist に必要ファイルが含まれているか見直す。
   - `scripts/kaggle_entry.py` が `/kaggle/working/app` へ payload を展開できているか確認する。

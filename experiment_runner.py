@@ -15,6 +15,8 @@ DEFAULT_EXPERIMENT_CONFIG = {
     "seed": 42,
     "model_variant": "legacy",
     "evaluation_model_variants": "legacy,multihot",
+    "saved_calibration_method": "none",
+    "evaluation_calibration_methods": "none,temperature,isotonic",
     "refresh_data": False,
     "skip_final_train": False,
     "skip_legacy_holdout": False,
@@ -37,10 +39,12 @@ TRACKED_SOURCE_FILES = [
     "requirements.txt",
     "requirements.lock",
     "artifact_utils.py",
+    "calibration_utils.py",
     "evaluation_statistics.py",
     "config.py",
     "data_collector.py",
     "model_variants.py",
+    "report_utils.py",
     "predict.py",
     "train_prob_model.py",
     "update_system.py",
@@ -56,9 +60,11 @@ TRACKED_ARTIFACT_FILES = [
     "data/manifest_{loto_type}.json",
     "data/prediction_history_{loto_type}.json",
     "data/{loto_type}_feature_cols.json",
+    "data/{loto_type}_calibrator.json",
     "models/{loto_type}_prob.keras",
     "models/{loto_type}_scaler.pkl",
     "models/{loto_type}_feature_cols.json",
+    "models/{loto_type}_calibrator.json",
 ]
 
 
@@ -123,6 +129,10 @@ def build_train_command(resolved_config):
         resolved_config["model_variant"],
         "--evaluation_model_variants",
         resolved_config["evaluation_model_variants"],
+        "--saved_calibration_method",
+        resolved_config["saved_calibration_method"],
+        "--evaluation_calibration_methods",
+        resolved_config["evaluation_calibration_methods"],
         "--seed",
         str(resolved_config["seed"]),
     ]
@@ -210,7 +220,9 @@ def load_manifest_summary(repo_root, loto_type):
         "generated_at": manifest.get("generated_at"),
         "data_hash": ((manifest.get("data_fingerprint") or {}).get("data_hash")),
         "saved_model_variant": ((manifest.get("training_context") or {}).get("model_variant")),
+        "saved_calibration_method": ((manifest.get("training_context") or {}).get("saved_calibration_method")),
         "recommended_model_variant": ((manifest.get("decision_summary") or {}).get("recommended_variant")),
+        "recommended_calibration_method": ((manifest.get("decision_summary") or {}).get("recommended_calibration_method")),
         "final_artifact_status": ((manifest.get("metrics_summary") or {}).get("final_artifact_status")),
     }
 

@@ -7,9 +7,11 @@
 - `data/manifest_{loto_type}.json`: 生成日時、学習レンジ、最新 draw、指標要約、git commit、data hash、seed、dependency versions、saved/recommended model variant。
 - `data/prediction_history_{loto_type}.json`: 評価対象 draw ごとの予測上位番号と実当選番号の照合履歴。
 - `data/*_feature_cols.json`: 学習時の特徴量列順。
+- `data/*_calibrator.json`: 保存済み production calibration artifact。`saved_calibration_method != none` のときだけ生成される。
 - `models/*_prob.keras`: 本番推論用モデル。
 - `models/*_scaler.pkl`: 本番推論用 scaler。
 - `models/*_feature_cols.json`: CLI 互換のための複製。
+- `models/*_calibrator.json`: CLI / Kaggle 互換のための複製。
 - `runs/<run_id>/...`: `scripts/run_experiment.py` が残す run ごとの config / source hash / artifact snapshot。
 - Kaggle 実行中は一度 `/kaggle/working/app/data` と `/kaggle/working/app/models` に作られ、完了時に `/kaggle/working/data` と `/kaggle/working/models` へ export する。
 
@@ -27,6 +29,10 @@
   - `decision_summary`
   - `run_options.model_variant`
   - `run_options.evaluation_model_variants`
+  - `run_options.saved_calibration_method`
+  - `run_options.evaluation_calibration_methods`
+  - `calibration`
+  - `calibration_evaluation`
 
 ## manifest の要点
 - `schema_version`
@@ -46,6 +52,9 @@
   - `seed`
   - `model_variant`
   - `evaluation_model_variants`
+  - `saved_calibration_method_requested`
+  - `saved_calibration_method`
+  - `evaluation_calibration_methods`
   - `feature_strategy`
   - `feature_channels`
   - `hyperparameters`
@@ -54,7 +63,15 @@
   - `dependencies`
 - `metrics_summary`
   - `saved_model_variant`
+  - `saved_calibration_method`
   - `recommended_model_variant`
+  - `recommended_calibration_method`
+  - `pre_calibration_logloss`
+  - `post_calibration_logloss`
+  - `pre_calibration_brier`
+  - `post_calibration_brier`
+  - `pre_calibration_ece`
+  - `post_calibration_ece`
 - `artifacts`
 - `artifact_metadata`
 - `prediction_history_path`
@@ -69,7 +86,7 @@
 - `loto_type`
 - `record_count`
 - `records[]`
-  - `draw_id`, `date`, `model_variant`, `evaluation_mode`, `fold_index`
+  - `draw_id`, `date`, `model_variant`, `calibration_method`, `evaluation_mode`, `fold_index`
   - `actual_numbers`
   - `predicted_top_k`
   - `predicted_top_k_hit_count`
@@ -84,7 +101,8 @@
 - `runs/` は最新 bundle の置き場ではなく、実験単位の追跡台帳として使う。
 - `prediction_history` は集計指標の根拠を draw 単位で見返すための artifact。Streamlit の「✅ 実績との照合」タブが主な参照先。
 - `model_variants` は評価用比較台帳で、保存済み本番 artifact は `training_context.model_variant` と `metrics_summary.saved_model_variant` を見る。
-- `statistical_tests` は draw 単位 logloss 差の CI / permutation test を保存する。運用更新の判定は `decision_summary` を参照する。
+- `statistical_tests` は draw 単位 logloss 差の CI / permutation test を保存し、比較時に使った calibration method も残す。運用更新の判定は `decision_summary` を参照する。
+- `calibration_evaluation` / `manifest.calibration` は raw / post-calibration の logloss・Brier・ECE・reliability bins を読み解く入口として使う。
 - live 予測履歴は今回は保存しないが、将来は `pending/resolved` の 2 段階で別 artifact に拡張できるよう JSON 形式を分離している。
 - モデル本体と scaler は再生成可能だが、UI 起動には必要。
 - Streamlit の予測タブは `processed.csv` / `feature_cols.json` / `scaler.pkl` / `model.keras` の世代が揃っている前提。Kaggle 同期ではこれらを一時ディレクトリにまとめて取得してから最後に入れ替える。
