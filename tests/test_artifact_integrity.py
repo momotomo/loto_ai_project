@@ -57,3 +57,22 @@ def test_prediction_artifact_integrity_checks_model_and_scaler_shape():
     )
 
     assert any(issue["kind"] == "model_feature_mismatch" for issue in issues)
+
+
+def test_prediction_artifact_integrity_detects_prepared_feature_count_mismatch():
+    df = build_feature_frame()
+    feature_cols = ["num1", "num2", "sum_val"]
+    scaler = MinMaxScaler().fit(df[feature_cols].to_numpy(dtype=np.float32))
+    model = build_model(len(feature_cols))
+
+    issues = inspect_prediction_artifact_integrity(
+        df=df,
+        feature_cols=feature_cols,
+        model=model,
+        scaler=scaler,
+        lookback_window=LOOKBACK_WINDOW,
+        feature_strategy="derived_multihot",
+        prepared_feature_count=len(feature_cols) + 2,
+    )
+
+    assert any(issue["kind"] == "prepared_feature_mismatch" for issue in issues)

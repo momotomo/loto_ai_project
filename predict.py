@@ -8,6 +8,7 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 import warnings
 from config import LOTO_CONFIG, LOOKBACK_WINDOW, generate_valid_sample
+from model_variants import build_recent_model_input, resolve_model_variant_from_manifest
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -20,6 +21,7 @@ MODEL_DIR = "models"
 def parse_args():
     parser = argparse.ArgumentParser(description="Run a quick lottery prediction smoke test.")
     parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
+    parser.add_argument("--model_variant", choices=["legacy", "multihot"], help="manifest が無い場合の variant 上書き")
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -39,6 +41,7 @@ if __name__ == "__main__":
             os.path.join(DATA_DIR, f"{ltype}_feature_cols.json"),
         ]
         data_path = os.path.join(DATA_DIR, f"{ltype}_processed.csv")
+        manifest_path = os.path.join(DATA_DIR, f"manifest_{ltype}.json")
         
         if not all(os.path.exists(p) for p in [model_path, scaler_path, data_path]):
             print(f"[{ltype.upper()}] 必要なファイルが不足しています。スキップします。")
@@ -56,17 +59,20 @@ if __name__ == "__main__":
         if feature_cols is None:
             print(f"[{ltype.upper()}] feature_cols.json が見つかりません。スキップします。")
             continue
-            
-        # データの準備
-        features_df = df[feature_cols] # 学習時と同じ列順序を保証
-        scaled_data = scaler.transform(features_df)
-        recent_input = np.array([scaled_data[-LOOKBACK_WINDOW:]], dtype=np.float32)
+
+        manifest = None
+        if os.path.exists(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        model_variant = args.model_variant or resolve_model_variant_from_manifest(manifest)
+        recent_input, prepared_dataset = build_recent_model_input(df, ltype, model_variant, scaler)
 
         # モデル推論
         model = load_model(model_path, compile=False)
         probs = model(tf.convert_to_tensor(recent_input), training=False).numpy()[0]
         
         print(f"\n--- {config['name']} の予測結果 ---")
+        print(f"variant: {model_variant} / feature_count: {len(prepared_dataset['feature_cols'])}")
         
         # 1. 確率の高い上位数字の表示
         top_idx = np.argsort(probs)[::-1]
