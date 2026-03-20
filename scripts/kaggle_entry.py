@@ -17,10 +17,12 @@ ROOT_OUTPUT_DIR = Path("/kaggle/working")
 SUMMARY_PATH = Path("/kaggle/working/kaggle_run_summary.json")
 REQUIRED_PAYLOAD_FILES = (
     "artifact_utils.py",
+    "calibration_utils.py",
     "evaluation_statistics.py",
     "config.py",
     "data_collector.py",
     "model_variants.py",
+    "report_utils.py",
     "train_prob_model.py",
     "predict.py",
     "update_system.py",
@@ -34,11 +36,13 @@ DATA_EXPORT_PATTERNS = (
     "eval_report_*.json",
     "prediction_history_*.json",
     "*_feature_cols.json",
+    "*_calibrator.json",
 )
 MODEL_EXPORT_PATTERNS = (
     "*_prob.keras",
     "*_scaler.pkl",
     "*_feature_cols.json",
+    "*_calibrator.json",
 )
 
 
@@ -173,6 +177,10 @@ def main():
     train_preset = run_config.get("train_preset", "fast")
     model_variant = str(run_config.get("model_variant", "legacy"))
     evaluation_model_variants = str(run_config.get("evaluation_model_variants", "legacy,multihot"))
+    saved_calibration_method = str(run_config.get("saved_calibration_method", "none"))
+    evaluation_calibration_methods = str(
+        run_config.get("evaluation_calibration_methods", "none,temperature,isotonic")
+    )
     seed = int(run_config.get("seed", 42))
     skip_legacy_holdout = bool(run_config.get("skip_legacy_holdout", False))
 
@@ -209,6 +217,10 @@ def main():
                 model_variant,
                 "--evaluation_model_variants",
                 evaluation_model_variants,
+                "--saved_calibration_method",
+                saved_calibration_method,
+                "--evaluation_calibration_methods",
+                evaluation_calibration_methods,
                 "--seed",
                 str(seed),
             ]

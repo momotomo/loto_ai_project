@@ -1,8 +1,15 @@
 import argparse
+import json
 import os
 import subprocess
 import sys
 
+from calibration_utils import (
+    CALIBRATION_METHOD_CHOICES,
+    DEFAULT_EVALUATION_CALIBRATION_METHODS,
+    DEFAULT_SAVED_CALIBRATION_METHOD,
+    NO_CALIBRATION_METHOD,
+)
 from config import LOTO_CONFIG
 from model_variants import DEFAULT_MODEL_VARIANT, MODEL_VARIANT_CHOICES
 
@@ -16,6 +23,17 @@ def parse_args():
     parser.add_argument("--train_preset", choices=["default", "fast", "smoke"], default="default", help="train_prob_model.py に渡す preset")
     parser.add_argument("--model_variant", choices=sorted(MODEL_VARIANT_CHOICES), default=DEFAULT_MODEL_VARIANT, help="保存する本番 artifact の model variant")
     parser.add_argument("--evaluation_model_variants", help="評価対象 variant をカンマ区切りで指定 (例: legacy,multihot)")
+    parser.add_argument(
+        "--saved_calibration_method",
+        choices=sorted(CALIBRATION_METHOD_CHOICES),
+        default=DEFAULT_SAVED_CALIBRATION_METHOD,
+        help="保存する本番 artifact の calibration method",
+    )
+    parser.add_argument(
+        "--evaluation_calibration_methods",
+        default=DEFAULT_EVALUATION_CALIBRATION_METHODS,
+        help="評価対象 calibration method をカンマ区切りで指定 (例: none,temperature,isotonic)",
+    )
     parser.add_argument("--skip_final_train", action="store_true", help="train_prob_model.py の final 学習を省略する")
     parser.add_argument("--skip_data_refresh", action="store_true", help="data_collector.py を実行せず、既存 data/*.csv を使う")
     parser.add_argument("--seed", type=int, default=42, help="train_prob_model.py に渡す乱数 seed")
@@ -33,6 +51,8 @@ def build_train_command(args):
     command = build_command("train_prob_model.py", args.loto_type)
     command.extend(["--preset", args.train_preset])
     command.extend(["--model_variant", args.model_variant])
+    command.extend(["--saved_calibration_method", args.saved_calibration_method])
+    command.extend(["--evaluation_calibration_methods", args.evaluation_calibration_methods])
     command.extend(["--seed", str(args.seed)])
     if args.evaluation_model_variants:
         command.extend(["--evaluation_model_variants", args.evaluation_model_variants])
@@ -62,6 +82,23 @@ def verify_artifacts(loto_type=None):
             missing.append(manifest_path)
         if not os.path.exists(prediction_history_path):
             missing.append(prediction_history_path)
+        if os.path.exists(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+            calibration_payload = manifest.get("calibration") or {}
+            training_context = manifest.get("training_context") or {}
+            saved_calibration_method = (
+                calibration_payload.get("saved_method")
+                or training_context.get("saved_calibration_method")
+                or NO_CALIBRATION_METHOD
+            )
+            if saved_calibration_method != NO_CALIBRATION_METHOD:
+                calibrator_candidates = [
+                    os.path.join("data", f"{current_loto_type}_calibrator.json"),
+                    os.path.join("models", f"{current_loto_type}_calibrator.json"),
+                ]
+                if not any(os.path.exists(path) for path in calibrator_candidates):
+                    missing.append(" or ".join(calibrator_candidates))
 
     if missing:
         print("❌ 学習完了後の成果物が不足しています。")

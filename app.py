@@ -18,9 +18,17 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 
 from artifact_utils import inspect_prediction_artifact_integrity as inspect_prediction_artifact_integrity_helper
+from calibration_utils import NO_CALIBRATION_METHOD, apply_calibration_artifact, get_calibration_method_label, load_calibrator_artifact
 from config import ARTIFACT_SCHEMA_VERSION, LOOKBACK_WINDOW, LOTO_CONFIG, generate_valid_sample
 from model_variants import build_recent_model_input, get_model_variant_label, resolve_feature_strategy_from_manifest
-from report_utils import build_statistical_test_rows, build_variant_summary_rows, get_saved_model_variant
+from report_utils import (
+    build_calibration_summary_rows,
+    build_statistical_test_rows,
+    build_variant_summary_rows,
+    get_saved_calibration_method,
+    get_saved_model_variant,
+    safe_calibration_label,
+)
 
 # --- Mac環境安定化設定 ---
 warnings.filterwarnings("ignore")
@@ -60,15 +68,18 @@ SYNC_REQUIRED_BUNDLE_FILES = [
 SYNC_OPTIONAL_BUNDLE_FILES = [
     "eval_report_{loto_type}.json",
     "prediction_history_{loto_type}.json",
+    "{loto_type}_calibrator.json",
 ]
 LOCAL_BUNDLE_DELETE_PATTERNS = [
     os.path.join("data", "{loto_type}_processed.csv"),
     os.path.join("data", "{loto_type}_feature_cols.json"),
+    os.path.join("data", "{loto_type}_calibrator.json"),
     os.path.join("data", "manifest_{loto_type}.json"),
     os.path.join("data", "eval_report_{loto_type}.json"),
     os.path.join("data", "prediction_history_{loto_type}.json"),
     os.path.join("data", "prediction_history_{loto_type}.csv"),
     os.path.join("models", "{loto_type}_feature_cols.json"),
+    os.path.join("models", "{loto_type}_calibrator.json"),
     os.path.join("models", "{loto_type}_scaler.pkl"),
     os.path.join("models", "{loto_type}_prob.keras"),
 ]
@@ -143,7 +154,7 @@ def classify_sync_destination(file_name):
         return [os.path.join("models", file_name)]
     if file_name.endswith(".json"):
         destinations = [os.path.join("data", file_name)]
-        if file_name.endswith("_feature_cols.json"):
+        if file_name.endswith(("_feature_cols.json", "_calibrator.json")):
             destinations.append(os.path.join("models", file_name))
         return destinations
     return []
@@ -277,6 +288,15 @@ def validate_staged_manifest(manifest, loto_type):
     return None
 
 
+def manifest_requires_calibrator(manifest):
+    if not isinstance(manifest, dict):
+        return False
+    calibration_payload = manifest.get("calibration") or {}
+    training_context = manifest.get("training_context") or {}
+    saved_method = calibration_payload.get("saved_method") or training_context.get("saved_calibration_method")
+    return saved_method not in (None, "", NO_CALIBRATION_METHOD)
+
+
 def safe_copy_into_place(src, dest, prepare_only=False):
     src_path = Path(src)
     dest_path = Path(dest)
@@ -370,6 +390,7 @@ def file_belongs_to_loto(file_name, loto_type):
         f"{loto_type}_raw.csv",
         f"{loto_type}_processed.csv",
         f"{loto_type}_feature_cols.json",
+        f"{loto_type}_calibrator.json",
         f"{loto_type}_prob.keras",
         f"{loto_type}_scaler.pkl",
         f"eval_report_{loto_type}.json",
@@ -413,6 +434,8 @@ def evaluate_sync_plan(plan, selected_files):
         )
         manifest = load_selected_json(selected_files, f"manifest_{loto_type}.json")
         manifest_error = validate_staged_manifest(manifest, loto_type) if manifest is not None else "manifest 欠落"
+        if manifest_error is None and manifest_requires_calibrator(manifest) and f"{loto_type}_calibrator.json" not in related_files:
+            manifest_error = "calibration 有効なのに calibrator artifact が不足"
         manifest_bundle_id = manifest.get("bundle_id") if isinstance(manifest, dict) else None
         manifest_generated_at = manifest.get("generated_at") if isinstance(manifest, dict) else None
 
@@ -627,7 +650,7 @@ def load_manifest(ltype):
     return load_json_candidates(f"manifest_{ltype}.json")
 
 
-def get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler):
+def get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler, manifest=None):
     missing = []
     if df is None:
         missing.append(f"data/{loto_type}_processed.csv")
@@ -637,7 +660,23 @@ def get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler)
         missing.append(f"models/{loto_type}_prob.keras")
     if scaler is None:
         missing.append(f"models/{loto_type}_scaler.pkl")
+    if get_saved_calibration_method(manifest=manifest) != NO_CALIBRATION_METHOD:
+        calibrator_artifact, calibrator_path = load_calibrator_artifact(loto_type)
+        if not isinstance(calibrator_artifact, dict) or not calibrator_path:
+            missing.append(f"data/{loto_type}_calibrator.json or models/{loto_type}_calibrator.json")
     return missing
+
+
+def load_prediction_calibrator(loto_type, manifest):
+    saved_calibration_method = get_saved_calibration_method(manifest=manifest)
+    calibrator_artifact, calibrator_path = load_calibrator_artifact(loto_type)
+    if saved_calibration_method == NO_CALIBRATION_METHOD:
+        return saved_calibration_method, None, None, "disabled"
+    if not isinstance(calibrator_artifact, dict) or not calibrator_path:
+        return saved_calibration_method, None, None, "missing"
+    if calibrator_artifact.get("status") != "fitted" or calibrator_artifact.get("method") != saved_calibration_method:
+        return saved_calibration_method, calibrator_artifact, calibrator_path, "incompatible"
+    return saved_calibration_method, calibrator_artifact, calibrator_path, "ready"
 
 
 def inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler, manifest=None, prepared_dataset=None):
@@ -753,6 +792,9 @@ def normalize_prediction_history_df(df):
     if "model_variant" not in normalized.columns:
         normalized["model_variant"] = "legacy"
     normalized["model_variant"] = normalized["model_variant"].fillna("legacy").astype(str)
+    if "calibration_method" not in normalized.columns:
+        normalized["calibration_method"] = NO_CALIBRATION_METHOD
+    normalized["calibration_method"] = normalized["calibration_method"].fillna(NO_CALIBRATION_METHOD).astype(str)
 
     if "hit_rate_any" not in normalized.columns:
         normalized["hit_rate_any"] = normalized["predicted_top_k_hit_count"].fillna(0) >= 1
@@ -768,8 +810,8 @@ def normalize_prediction_history_df(df):
         normalized["date"] = normalized["date"].astype(str)
 
     normalized = normalized.sort_values(
-        ["draw_id", "evaluation_mode", "model_variant", "fold_index"],
-        ascending=[True, True, True, True],
+        ["draw_id", "evaluation_mode", "model_variant", "calibration_method", "fold_index"],
+        ascending=[True, True, True, True, True],
         na_position="first",
     ).reset_index(drop=True)
     return normalized
@@ -895,10 +937,12 @@ def render_manifest_section(manifest):
     st.subheader("🧾 Artifact Manifest")
     metrics_summary = manifest.get("metrics_summary", {})
     decision_summary = manifest.get("decision_summary") or metrics_summary.get("decision_summary") or {}
+    calibration_payload = manifest.get("calibration") or {}
     data_fingerprint = manifest.get("data_fingerprint", {})
     training_context = manifest.get("training_context", {})
     runtime_environment = manifest.get("runtime_environment", {})
     primary_model = metrics_summary.get("primary_model") or metrics_summary.get("walk_forward_model", {})
+    selected_calibration_model = metrics_summary.get("selected_calibration_model") or {}
     best_static = metrics_summary.get("best_static_baseline", {})
     evaluation_source = metrics_summary.get("evaluation_source", "walk_forward")
     final_artifact_status = metrics_summary.get("final_artifact_status", "-")
@@ -906,8 +950,8 @@ def render_manifest_section(manifest):
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("latest_draw_id", manifest.get("latest_draw_id"))
     col2.metric("Primary LogLoss", format_metric(primary_model.get("logloss_mean")))
-    col3.metric("Primary Brier", format_metric(primary_model.get("brier_mean")))
-    col4.metric("Best static", BASELINE_LABELS.get(best_static.get("name"), best_static.get("name", "-")))
+    col3.metric("Post-Cal LogLoss", format_metric(metrics_summary.get("post_calibration_logloss")))
+    col4.metric("Saved calibration", safe_calibration_label(calibration_payload.get("saved_method")))
 
     train_range = manifest.get("train_range", {})
     delta = best_static.get("delta_model_minus_baseline", {})
@@ -942,8 +986,22 @@ def render_manifest_section(manifest):
             f"{training_context.get('preset', '-')}, "
             f"seed={training_context.get('seed', '-')}, "
             f"saved_variant={training_context.get('model_variant', '-')}, "
+            f"saved_calibration={safe_calibration_label(training_context.get('saved_calibration_method'))}, "
             f"lookback={training_context.get('lookback_window', '-')}, "
             f"feature_cols={training_context.get('feature_column_count', '-')}"
+        )
+    if selected_calibration_model:
+        st.caption(
+            "pre/post calibration: "
+            f"logloss {format_metric(metrics_summary.get('pre_calibration_logloss'))} -> {format_metric(metrics_summary.get('post_calibration_logloss'))}, "
+            f"brier {format_metric(metrics_summary.get('pre_calibration_brier'))} -> {format_metric(metrics_summary.get('post_calibration_brier'))}, "
+            f"ece {format_metric(metrics_summary.get('pre_calibration_ece'))} -> {format_metric(metrics_summary.get('post_calibration_ece'))}"
+        )
+    if calibration_payload:
+        st.caption(
+            "recommended_calibration="
+            f"{safe_calibration_label(calibration_payload.get('recommended_method'))}, "
+            f"artifact={calibration_payload.get('artifact_path', '-')}"
         )
     if data_fingerprint:
         data_hash = data_fingerprint.get("data_hash")
@@ -965,9 +1023,12 @@ def render_manifest_section(manifest):
         st.caption(
             "recommended_variant="
             f"{format_model_variant_label(decision_summary.get('recommended_variant'))}, "
+            f"recommended_calibration={safe_calibration_label(decision_summary.get('recommended_calibration_method'))}, "
             f"best_logloss_variant={format_model_variant_label(decision_summary.get('best_variant_by_logloss'))}, "
             f"promote_candidate={decision_summary.get('should_promote_candidate', '-')}"
         )
+        for line in decision_summary.get("reason_summary", [])[:3]:
+            st.caption(f"- {line}")
 
     with st.expander("Manifest 詳細", expanded=False):
         st.json(manifest)
@@ -991,6 +1052,20 @@ def render_legacy_holdout_section(report):
     st.dataframe(pd.DataFrame(rows).set_index("モデル"), use_container_width=True)
     st.write("##### Holdout Calibration")
     render_calibration_chart(legacy["model"]["calibration"], "#2563eb")
+    calibration_rows = build_calibration_summary_rows(
+        {
+            "model_variants": {
+                "primary": {
+                    "calibration_selection": ((report.get("model_variants") or {}).get(get_saved_model_variant(report=report)) or {}).get(
+                        "calibration_selection"
+                    )
+                }
+            }
+        }
+    )
+    if calibration_rows:
+        calibration_df = pd.DataFrame(calibration_rows)
+        st.dataframe(calibration_df, use_container_width=True)
 
 
 def render_walk_forward_section(report):
@@ -1031,7 +1106,28 @@ def render_walk_forward_section(report):
     variant_rows = build_variant_summary_rows(report)
     if variant_rows:
         st.write("##### Variant Comparison")
-        st.dataframe(pd.DataFrame(variant_rows), use_container_width=True)
+        variant_df = pd.DataFrame(variant_rows)
+        for column_name in [
+            "raw_logloss_mean",
+            "raw_brier_mean",
+            "raw_ece",
+            "logloss_mean",
+            "brier_mean",
+            "ece",
+            "mean_overlap_top_k_mean",
+        ]:
+            if column_name in variant_df:
+                variant_df[column_name] = variant_df[column_name].map(format_metric)
+        st.dataframe(variant_df, use_container_width=True)
+
+    calibration_rows = build_calibration_summary_rows(report)
+    if calibration_rows:
+        st.write("##### Calibration Comparison")
+        calibration_df = pd.DataFrame(calibration_rows)
+        for column_name in ["logloss", "brier", "ece", "delta_logloss_vs_raw", "delta_brier_vs_raw", "delta_ece_vs_raw"]:
+            if column_name in calibration_df:
+                calibration_df[column_name] = calibration_df[column_name].map(format_metric)
+        st.dataframe(calibration_df, use_container_width=True)
 
     statistical_rows = build_statistical_test_rows(report)
     if statistical_rows:
@@ -1042,6 +1138,14 @@ def render_walk_forward_section(report):
             statistical_df["ci_lower"] = statistical_df["ci_lower"].map(format_metric)
             statistical_df["ci_upper"] = statistical_df["ci_upper"].map(format_metric)
             statistical_df["p_value"] = statistical_df["p_value"].map(format_p_value)
+            if "candidate_calibration_method" in statistical_df:
+                statistical_df["candidate_calibration_method"] = statistical_df["candidate_calibration_method"].map(
+                    safe_calibration_label
+                )
+            if "reference_calibration_method" in statistical_df:
+                statistical_df["reference_calibration_method"] = statistical_df["reference_calibration_method"].map(
+                    safe_calibration_label
+                )
         st.dataframe(statistical_df, use_container_width=True)
 
     decision_summary = report.get("decision_summary") or {}
@@ -1050,11 +1154,18 @@ def render_walk_forward_section(report):
         st.caption(
             "saved_variant="
             f"{format_model_variant_label(decision_summary.get('production_variant'))}, "
+            f"saved_calibration={safe_calibration_label(decision_summary.get('production_saved_calibration_method'))}, "
             f"recommended_variant={format_model_variant_label(decision_summary.get('recommended_variant'))}, "
+            f"recommended_calibration={safe_calibration_label(decision_summary.get('recommended_calibration_method'))}, "
             f"best_variant_by_logloss={format_model_variant_label(decision_summary.get('best_variant_by_logloss'))}, "
             f"promote_candidate={decision_summary.get('should_promote_candidate', '-')}"
         )
-        st.caption("rule: multihot が best static と legacy の両方に対して CI/p-value 条件を満たした場合のみ昇格候補にします。")
+        st.caption(
+            "rule: multihot が best static と legacy の両方に対して CI/p-value 条件を満たし、"
+            "さらに選択 calibration でも logloss/Brier/ECE guardrail を満たした場合のみ昇格候補にします。"
+        )
+        for line in decision_summary.get("reason_summary", [])[:5]:
+            st.caption(f"- {line}")
 
     online_rows = [
         summary_entry_to_row(BASELINE_LABELS.get(name, name), summary)
@@ -1102,10 +1213,11 @@ def render_prediction_history_section(loto_type):
 
     available_modes = ["all"] + sorted(history_df["evaluation_mode"].dropna().unique().tolist())
     available_variants = ["all"] + sorted(history_df["model_variant"].dropna().unique().tolist())
+    available_calibrations = ["all"] + sorted(history_df["calibration_method"].dropna().unique().tolist())
     default_min_draw = int(history_df["draw_id"].min())
     default_max_draw = int(history_df["draw_id"].max())
 
-    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(5)
+    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5, filter_col6 = st.columns(6)
     with filter_col1:
         selected_mode = st.selectbox("evaluation_mode", available_modes, index=0)
     with filter_col2:
@@ -1118,8 +1230,15 @@ def render_prediction_history_section(loto_type):
             format_func=lambda value: "all" if value == "all" else get_model_variant_label(value),
         )
     with filter_col4:
-        recent_option = st.selectbox("直近N件表示", ["10", "20", "50", "全件"], index=3)
+        selected_calibration = st.selectbox(
+            "calibration",
+            available_calibrations,
+            index=0,
+            format_func=lambda value: "all" if value == "all" else safe_calibration_label(value),
+        )
     with filter_col5:
+        recent_option = st.selectbox("直近N件表示", ["10", "20", "50", "全件"], index=3)
+    with filter_col6:
         one_plus_only = st.checkbox("1個以上一致のみ表示", value=False)
 
     filtered = history_df.copy()
@@ -1127,13 +1246,15 @@ def render_prediction_history_section(loto_type):
         filtered = filtered[filtered["evaluation_mode"] == selected_mode]
     if selected_variant != "all":
         filtered = filtered[filtered["model_variant"] == selected_variant]
+    if selected_calibration != "all":
+        filtered = filtered[filtered["calibration_method"] == selected_calibration]
     filtered = filtered[filtered["draw_id"].between(draw_range[0], draw_range[1])]
     if one_plus_only:
         filtered = filtered[filtered["hit_rate_any"]]
 
     filtered = filtered.sort_values(
-        ["draw_id", "evaluation_mode", "model_variant", "fold_index"],
-        ascending=[False, True, True, True],
+        ["draw_id", "evaluation_mode", "model_variant", "calibration_method", "fold_index"],
+        ascending=[False, True, True, True, True],
     )
     if recent_option != "全件":
         filtered = filtered.head(int(recent_option))
@@ -1172,6 +1293,7 @@ def render_prediction_history_section(loto_type):
     display_df["predicted_top_k_hit_numbers"] = display_df["predicted_top_k_hit_numbers"].apply(format_number_list)
     display_df["fold_index"] = display_df["fold_index"].apply(lambda value: "-" if pd.isna(value) else int(value))
     display_df["model_variant"] = display_df["model_variant"].map(get_model_variant_label)
+    display_df["calibration_method"] = display_df["calibration_method"].map(safe_calibration_label)
     display_df = display_df[
         [
             "draw_id",
@@ -1181,6 +1303,7 @@ def render_prediction_history_section(loto_type):
             "predicted_top_k_hit_numbers",
             "predicted_top_k_hit_count",
             "model_variant",
+            "calibration_method",
             "evaluation_mode",
             "fold_index",
         ]
@@ -1193,6 +1316,7 @@ def render_prediction_history_section(loto_type):
             "predicted_top_k_hit_numbers": "predicted_top_k_hit_numbers",
             "predicted_top_k_hit_count": "hit_count",
             "model_variant": "model_variant",
+            "calibration_method": "calibration_method",
             "evaluation_mode": "evaluation_mode",
             "fold_index": "fold_index",
         }
@@ -1209,6 +1333,7 @@ def render_prediction_history_section(loto_type):
             f"第{int(detail_source.iloc[index]['draw_id'])}回 "
             f"{detail_source.iloc[index]['date']} "
             f"{format_model_variant_label(detail_source.iloc[index]['model_variant'])} "
+            f"{safe_calibration_label(detail_source.iloc[index]['calibration_method'])} "
             f"{detail_source.iloc[index]['evaluation_mode']} "
             f"fold={('-' if pd.isna(detail_source.iloc[index]['fold_index']) else int(detail_source.iloc[index]['fold_index']))}"
         ),
@@ -1236,7 +1361,7 @@ def render_prediction_history_section(loto_type):
 def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols, manifest):
     st.subheader("✨ 次回向けの確率予測と買い目生成")
 
-    missing_artifacts = get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler)
+    missing_artifacts = get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler, manifest=manifest)
     if missing_artifacts:
         st.error(f"⚠️ {loto_type} の予測用 artifact が不足しています。")
         st.write("不足しているファイル:")
@@ -1280,14 +1405,30 @@ def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols, ma
 
     st.markdown("---")
     st.write(f"対象 loto_type: `{loto_type}`")
+    saved_calibration_method, calibrator_artifact, calibrator_path, calibrator_status = load_prediction_calibrator(
+        loto_type,
+        manifest,
+    )
     st.caption(
         "saved_variant="
         f"{get_model_variant_label(saved_model_variant)} ({saved_model_variant}), "
+        f"saved_calibration={safe_calibration_label(saved_calibration_method)}, "
         f"feature_strategy={resolve_feature_strategy_from_manifest(manifest)}, "
         f"feature_cols={len(feature_cols)}"
     )
     recent_input = prepared_recent_input
     probs = model(tf.convert_to_tensor(recent_input), training=False).numpy()[0]
+    applied_calibration_method = NO_CALIBRATION_METHOD
+    if calibrator_status == "ready":
+        probs = apply_calibration_artifact(calibrator_artifact, probs)
+        applied_calibration_method = saved_calibration_method
+    elif calibrator_status in {"missing", "incompatible"}:
+        st.warning("manifest 上では calibration が有効ですが、適用可能な calibrator artifact が見つからなかったため raw 確率を表示しています。")
+    if calibrator_status != "disabled":
+        st.caption(
+            f"calibrator_status={calibrator_status}, applied_calibration={safe_calibration_label(applied_calibration_method)}, "
+            f"artifact={calibrator_path or '-'}"
+        )
 
     prob_df = pd.DataFrame({"Number": np.arange(1, config["max_num"] + 1), "Probability": probs})
     chart = alt.Chart(prob_df).mark_bar(color=config["color"]).encode(
@@ -1324,115 +1465,127 @@ def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols, ma
                 )
 
 
-with st.sidebar:
-    st.header("☁️ Kaggle 同期設定")
-    sync_notice = st.session_state.pop(SYNC_NOTICE_STATE_KEY, None)
-    if sync_notice:
-        st.success(sync_notice["message"])
-        if sync_notice.get("target_inference_source"):
-            st.caption(f"target inference: {sync_notice['target_inference_source']}")
-        for line in sync_notice.get("summary_lines", []):
-            st.caption(line)
-        for loto_type, bundle_info in (sync_notice.get("bundle_details") or {}).items():
-            caption_parts = []
-            if bundle_info.get("bundle_id"):
-                caption_parts.append(f"bundle_id={bundle_info['bundle_id']}")
-            if bundle_info.get("generated_at"):
-                caption_parts.append(f"generated_at={bundle_info.get('generated_at')}")
-            if bundle_info.get("source_mode") and bundle_info.get("source_mode") != "unknown":
-                caption_parts.append(f"source={bundle_info.get('source_mode')}")
-            if caption_parts:
-                st.caption(f"{loto_type}: {' / '.join(caption_parts)}")
-        for line in sync_notice.get("manifest_lines", []):
-            st.caption(line)
+def main():
+    with st.sidebar:
+        st.header("☁️ Kaggle 同期設定")
+        sync_notice = st.session_state.pop(SYNC_NOTICE_STATE_KEY, None)
+        if sync_notice:
+            st.success(sync_notice["message"])
+            if sync_notice.get("target_inference_source"):
+                st.caption(f"target inference: {sync_notice['target_inference_source']}")
+            for line in sync_notice.get("summary_lines", []):
+                st.caption(line)
+            for loto_type, bundle_info in (sync_notice.get("bundle_details") or {}).items():
+                caption_parts = []
+                if bundle_info.get("bundle_id"):
+                    caption_parts.append(f"bundle_id={bundle_info['bundle_id']}")
+                if bundle_info.get("generated_at"):
+                    caption_parts.append(f"generated_at={bundle_info.get('generated_at')}")
+                if bundle_info.get("source_mode") and bundle_info.get("source_mode") != "unknown":
+                    caption_parts.append(f"source={bundle_info.get('source_mode')}")
+                if caption_parts:
+                    st.caption(f"{loto_type}: {' / '.join(caption_parts)}")
+            for line in sync_notice.get("manifest_lines", []):
+                st.caption(line)
 
-    cleanup_notice = st.session_state.pop(LOCAL_CLEAN_NOTICE_STATE_KEY, None)
-    if cleanup_notice:
-        st.success(cleanup_notice["message"])
-        for line in cleanup_notice.get("details", []):
-            st.caption(line)
+        cleanup_notice = st.session_state.pop(LOCAL_CLEAN_NOTICE_STATE_KEY, None)
+        if cleanup_notice:
+            st.success(cleanup_notice["message"])
+            for line in cleanup_notice.get("details", []):
+                st.caption(line)
 
-    default_kernel_ref = os.getenv("KAGGLE_SLUG", "")
-    if not default_kernel_ref and "KAGGLE_SLUG" in st.secrets:
-        default_kernel_ref = st.secrets["KAGGLE_SLUG"]
+        default_kernel_ref = os.getenv("KAGGLE_SLUG", "")
+        if not default_kernel_ref and "KAGGLE_SLUG" in st.secrets:
+            default_kernel_ref = st.secrets["KAGGLE_SLUG"]
 
-    kernel_ref_input = st.text_input("Kernel Ref (owner/kernel-slug)", value=default_kernel_ref, help=f"例: {KERNEL_REF_EXAMPLE}")
-    st.caption(f"例: `{KERNEL_REF_EXAMPLE}`")
-    st.caption("slug 単体ではなく owner を含む `owner/kernel-slug` 形式が必要です。")
+        kernel_ref_input = st.text_input(
+            "Kernel Ref (owner/kernel-slug)",
+            value=default_kernel_ref,
+            help=f"例: {KERNEL_REF_EXAMPLE}",
+        )
+        st.caption(f"例: `{KERNEL_REF_EXAMPLE}`")
+        st.caption("slug 単体ではなく owner を含む `owner/kernel-slug` 形式が必要です。")
 
-    if st.button("🔄 最新AIモデルを同期", use_container_width=True):
-        normalized_input = normalize_kernel_ref(kernel_ref_input)
-        if not normalized_input:
-            st.warning("Kernel Ref を入力してください。")
-        else:
-            is_valid_ref, normalized_ref, validation_message = validate_kernel_ref(normalized_input)
-            if not is_valid_ref:
-                st.error(validation_message)
+        if st.button("🔄 最新AIモデルを同期", use_container_width=True):
+            normalized_input = normalize_kernel_ref(kernel_ref_input)
+            if not normalized_input:
+                st.warning("Kernel Ref を入力してください。")
             else:
-                with st.spinner("同期中..."):
-                    success, message, sync_summary = sync_from_kaggle(normalized_ref)
-                    if success:
-                        st.session_state[SYNC_NOTICE_STATE_KEY] = {
-                            "message": message
-                            + f" Kernel Ref: {normalized_ref} / files={((sync_summary or {}).get('file_count', '-'))}",
-                            "target_inference_source": (sync_summary or {}).get("target_inference_source"),
-                            "summary_lines": (sync_summary or {}).get("summary_lines", []),
-                            "bundle_details": (sync_summary or {}).get("bundle_details", {}),
-                            "manifest_lines": (sync_summary or {}).get("manifest_lines", []),
-                        }
-                        st.cache_data.clear()
-                        st.cache_resource.clear()
-                        st.rerun()
-                    else:
-                        st.error(message)
+                is_valid_ref, normalized_ref, validation_message = validate_kernel_ref(normalized_input)
+                if not is_valid_ref:
+                    st.error(validation_message)
+                else:
+                    with st.spinner("同期中..."):
+                        success, message, sync_summary = sync_from_kaggle(normalized_ref)
+                        if success:
+                            st.session_state[SYNC_NOTICE_STATE_KEY] = {
+                                "message": message
+                                + f" Kernel Ref: {normalized_ref} / files={((sync_summary or {}).get('file_count', '-'))}",
+                                "target_inference_source": (sync_summary or {}).get("target_inference_source"),
+                                "summary_lines": (sync_summary or {}).get("summary_lines", []),
+                                "bundle_details": (sync_summary or {}).get("bundle_details", {}),
+                                "manifest_lines": (sync_summary or {}).get("manifest_lines", []),
+                            }
+                            st.cache_data.clear()
+                            st.cache_resource.clear()
+                            st.rerun()
+                        else:
+                            st.error(message)
 
-    with st.expander("🧹 ローカル artifact 管理", expanded=False):
-        st.caption("対象 loto_type の processed / feature_cols / scaler / model / manifest / eval_report / prediction_history を削除します。")
-        for loto_type in sorted(LOTO_CONFIG.keys()):
-            if st.button(f"🧹 {loto_type} のローカル artifact を削除", use_container_width=True, key=f"cleanup-{loto_type}"):
-                cleanup_result = remove_local_artifacts_for_loto(loto_type)
-                st.session_state[LOCAL_CLEAN_NOTICE_STATE_KEY] = {
-                    "message": format_cleanup_notice(loto_type, cleanup_result),
-                    "details": [
-                        f"removed: {', '.join(cleanup_result['removed'])}" if cleanup_result["removed"] else "removed: なし",
-                        f"missing: {', '.join(cleanup_result['missing'])}" if cleanup_result["missing"] else "missing: なし",
-                    ],
-                }
-                st.cache_data.clear()
-                st.cache_resource.clear()
-                st.rerun()
+        with st.expander("🧹 ローカル artifact 管理", expanded=False):
+            st.caption("対象 loto_type の processed / feature_cols / scaler / model / manifest / eval_report / prediction_history を削除します。")
+            for loto_type in sorted(LOTO_CONFIG.keys()):
+                if st.button(
+                    f"🧹 {loto_type} のローカル artifact を削除",
+                    use_container_width=True,
+                    key=f"cleanup-{loto_type}",
+                ):
+                    cleanup_result = remove_local_artifacts_for_loto(loto_type)
+                    st.session_state[LOCAL_CLEAN_NOTICE_STATE_KEY] = {
+                        "message": format_cleanup_notice(loto_type, cleanup_result),
+                        "details": [
+                            f"removed: {', '.join(cleanup_result['removed'])}" if cleanup_result["removed"] else "removed: なし",
+                            f"missing: {', '.join(cleanup_result['missing'])}" if cleanup_result["missing"] else "missing: なし",
+                        ],
+                    }
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                    st.rerun()
+
+    st.title("🎯 宝くじ AI確率予測システム")
+    st.markdown("LSTMから出力された**出現確率ベクトル**に基づき、重み付きサンプリングで買い目を生成します。")
+    st.markdown("---")
+
+    selected_loto = st.radio(
+        "宝くじの種類",
+        options=list(LOTO_CONFIG.keys()),
+        format_func=lambda x: LOTO_CONFIG[x]["name"],
+        horizontal=True,
+    )
+    config = LOTO_CONFIG[selected_loto]
+
+    df, model, scaler, feature_cols = load_assets(selected_loto)
+    manifest = load_manifest(selected_loto)
+
+    tab1, tab2, tab3 = st.tabs(["🎲 確率サンプリング予測", "📊 モデル評価レポート (Walk-Forward)", "✅ 実績との照合"])
+
+    with tab2:
+        report = load_eval_report(selected_loto)
+        render_manifest_section(manifest)
+
+        if report:
+            render_walk_forward_section(report)
+        else:
+            st.info("評価レポートが見つかりません。")
+            st.write("デバッグ情報: data/ フォルダ内のファイル一覧")
+            st.write(os.listdir("data") if os.path.exists("data") else "data フォルダが存在しません")
+
+    with tab3:
+        render_prediction_history_section(selected_loto)
+
+    with tab1:
+        render_prediction_tab(selected_loto, config, df, model, scaler, feature_cols, manifest)
 
 
-st.title("🎯 宝くじ AI確率予測システム")
-st.markdown("LSTMから出力された**出現確率ベクトル**に基づき、重み付きサンプリングで買い目を生成します。")
-st.markdown("---")
-
-selected_loto = st.radio(
-    "宝くじの種類",
-    options=list(LOTO_CONFIG.keys()),
-    format_func=lambda x: LOTO_CONFIG[x]["name"],
-    horizontal=True,
-)
-config = LOTO_CONFIG[selected_loto]
-
-df, model, scaler, feature_cols = load_assets(selected_loto)
-manifest = load_manifest(selected_loto)
-
-tab1, tab2, tab3 = st.tabs(["🎲 確率サンプリング予測", "📊 モデル評価レポート (Walk-Forward)", "✅ 実績との照合"])
-
-with tab2:
-    report = load_eval_report(selected_loto)
-    render_manifest_section(manifest)
-
-    if report:
-        render_walk_forward_section(report)
-    else:
-        st.info("評価レポートが見つかりません。")
-        st.write("デバッグ情報: data/ フォルダ内のファイル一覧")
-        st.write(os.listdir("data") if os.path.exists("data") else "data フォルダが存在しません")
-
-with tab3:
-    render_prediction_history_section(selected_loto)
-
-with tab1:
-    render_prediction_tab(selected_loto, config, df, model, scaler, feature_cols, manifest)
+if __name__ == "__main__":
+    main()
