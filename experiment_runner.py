@@ -13,6 +13,8 @@ DEFAULT_EXPERIMENT_CONFIG = {
     "loto_type": None,
     "preset": "default",
     "seed": 42,
+    "model_variant": "legacy",
+    "evaluation_model_variants": "legacy,multihot",
     "refresh_data": False,
     "skip_final_train": False,
     "skip_legacy_holdout": False,
@@ -35,11 +37,15 @@ TRACKED_SOURCE_FILES = [
     "requirements.txt",
     "requirements.lock",
     "artifact_utils.py",
+    "evaluation_statistics.py",
     "config.py",
     "data_collector.py",
+    "model_variants.py",
+    "predict.py",
     "train_prob_model.py",
     "update_system.py",
     "app.py",
+    "scripts/kaggle_entry.py",
     "scripts/kaggle_prepare_kernel_dir.py",
 ]
 
@@ -100,6 +106,7 @@ def build_run_id(resolved_config, now=None):
     compact = timestamp.strftime("%Y%m%dT%H%M%SZ")
     return (
         f"{compact}_{resolved_config['loto_type']}_{resolved_config['preset']}"
+        f"_{resolved_config['model_variant']}"
         f"_seed{resolved_config['seed']}"
     )
 
@@ -112,6 +119,10 @@ def build_train_command(resolved_config):
         resolved_config["loto_type"],
         "--preset",
         resolved_config["preset"],
+        "--model_variant",
+        resolved_config["model_variant"],
+        "--evaluation_model_variants",
+        resolved_config["evaluation_model_variants"],
         "--seed",
         str(resolved_config["seed"]),
     ]
@@ -198,6 +209,8 @@ def load_manifest_summary(repo_root, loto_type):
         "bundle_id": manifest.get("bundle_id"),
         "generated_at": manifest.get("generated_at"),
         "data_hash": ((manifest.get("data_fingerprint") or {}).get("data_hash")),
+        "saved_model_variant": ((manifest.get("training_context") or {}).get("model_variant")),
+        "recommended_model_variant": ((manifest.get("decision_summary") or {}).get("recommended_variant")),
         "final_artifact_status": ((manifest.get("metrics_summary") or {}).get("final_artifact_status")),
     }
 

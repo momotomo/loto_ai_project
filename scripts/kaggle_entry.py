@@ -17,8 +17,10 @@ ROOT_OUTPUT_DIR = Path("/kaggle/working")
 SUMMARY_PATH = Path("/kaggle/working/kaggle_run_summary.json")
 REQUIRED_PAYLOAD_FILES = (
     "artifact_utils.py",
+    "evaluation_statistics.py",
     "config.py",
     "data_collector.py",
+    "model_variants.py",
     "train_prob_model.py",
     "predict.py",
     "update_system.py",
@@ -169,6 +171,8 @@ def main():
         return
 
     train_preset = run_config.get("train_preset", "fast")
+    model_variant = str(run_config.get("model_variant", "legacy"))
+    evaluation_model_variants = str(run_config.get("evaluation_model_variants", "legacy,multihot"))
     seed = int(run_config.get("seed", 42))
     skip_legacy_holdout = bool(run_config.get("skip_legacy_holdout", False))
 
@@ -201,6 +205,10 @@ def main():
                 loto_type,
                 "--preset",
                 train_preset,
+                "--model_variant",
+                model_variant,
+                "--evaluation_model_variants",
+                evaluation_model_variants,
                 "--seed",
                 str(seed),
             ]

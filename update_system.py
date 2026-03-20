@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 from config import LOTO_CONFIG
+from model_variants import DEFAULT_MODEL_VARIANT, MODEL_VARIANT_CHOICES
 
 # --- Macフリーズ対策 ---
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -13,6 +14,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run data refresh, training, and a quick prediction smoke test.")
     parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
     parser.add_argument("--train_preset", choices=["default", "fast", "smoke"], default="default", help="train_prob_model.py に渡す preset")
+    parser.add_argument("--model_variant", choices=sorted(MODEL_VARIANT_CHOICES), default=DEFAULT_MODEL_VARIANT, help="保存する本番 artifact の model variant")
+    parser.add_argument("--evaluation_model_variants", help="評価対象 variant をカンマ区切りで指定 (例: legacy,multihot)")
     parser.add_argument("--skip_final_train", action="store_true", help="train_prob_model.py の final 学習を省略する")
     parser.add_argument("--skip_data_refresh", action="store_true", help="data_collector.py を実行せず、既存 data/*.csv を使う")
     parser.add_argument("--seed", type=int, default=42, help="train_prob_model.py に渡す乱数 seed")
@@ -29,7 +32,10 @@ def build_command(script_name, loto_type=None):
 def build_train_command(args):
     command = build_command("train_prob_model.py", args.loto_type)
     command.extend(["--preset", args.train_preset])
+    command.extend(["--model_variant", args.model_variant])
     command.extend(["--seed", str(args.seed)])
+    if args.evaluation_model_variants:
+        command.extend(["--evaluation_model_variants", args.evaluation_model_variants])
     if args.skip_final_train:
         command.append("--skip_final_train")
     return command

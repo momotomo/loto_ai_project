@@ -92,20 +92,38 @@ def normalize_model_input_shape(model):
     return None
 
 
-def inspect_prediction_artifact_integrity(df, feature_cols, model, scaler, lookback_window):
+def inspect_prediction_artifact_integrity(
+    df,
+    feature_cols,
+    model,
+    scaler,
+    lookback_window,
+    feature_strategy="tabular",
+    prepared_feature_count=None,
+):
     issues = []
 
     if df is None or feature_cols is None:
         return issues
 
-    missing_cols = [column for column in feature_cols if column not in df.columns]
-    if missing_cols:
+    if feature_strategy == "tabular":
+        missing_cols = [column for column in feature_cols if column not in df.columns]
+        if missing_cols:
+            issues.append(
+                {
+                    "kind": "missing_columns",
+                    "message": "特徴量定義と processed.csv が不整合です。",
+                    "missing_cols": missing_cols,
+                    "csv_column_count": len(df.columns),
+                    "feature_col_count": len(feature_cols),
+                }
+            )
+    elif prepared_feature_count is not None and prepared_feature_count != len(feature_cols):
         issues.append(
             {
-                "kind": "missing_columns",
-                "message": "特徴量定義と processed.csv が不整合です。",
-                "missing_cols": missing_cols,
-                "csv_column_count": len(df.columns),
+                "kind": "prepared_feature_mismatch",
+                "message": "派生特徴の生成結果と feature_cols の長さが一致しません。",
+                "prepared_feature_count": int(prepared_feature_count),
                 "feature_col_count": len(feature_cols),
             }
         )

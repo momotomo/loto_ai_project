@@ -19,6 +19,8 @@ from tensorflow.keras.models import load_model
 
 from artifact_utils import inspect_prediction_artifact_integrity as inspect_prediction_artifact_integrity_helper
 from config import ARTIFACT_SCHEMA_VERSION, LOOKBACK_WINDOW, LOTO_CONFIG, generate_valid_sample
+from model_variants import build_recent_model_input, get_model_variant_label, resolve_feature_strategy_from_manifest
+from report_utils import build_statistical_test_rows, build_variant_summary_rows, get_saved_model_variant
 
 # --- Mac環境安定化設定 ---
 warnings.filterwarnings("ignore")
@@ -638,13 +640,19 @@ def get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler)
     return missing
 
 
-def inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler):
+def inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler, manifest=None, prepared_dataset=None):
+    feature_strategy = resolve_feature_strategy_from_manifest(manifest)
+    prepared_feature_count = None
+    if prepared_dataset is not None:
+        prepared_feature_count = len(prepared_dataset.get("feature_cols", []))
     return inspect_prediction_artifact_integrity_helper(
         df=df,
         feature_cols=feature_cols,
         model=model,
         scaler=scaler,
         lookback_window=LOOKBACK_WINDOW,
+        feature_strategy=feature_strategy,
+        prepared_feature_count=prepared_feature_count,
     )
 
 
@@ -675,6 +683,9 @@ def render_prediction_integrity_issues(loto_type, issues, manifest=None):
             st.write(f"  - expected lookback: {issue['expected_lookback']}")
         elif issue["kind"] == "model_feature_mismatch":
             st.write(f"  - model input feature 次元: {issue['model_feature_count']}")
+            st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
+        elif issue["kind"] == "prepared_feature_mismatch":
+            st.write(f"  - 生成済み特徴数: {issue['prepared_feature_count']}")
             st.write(f"  - feature_cols 数: {issue['feature_col_count']}")
         elif issue["kind"] == "insufficient_rows":
             st.write(f"  - CSV 行数: {issue['row_count']}")
@@ -739,6 +750,10 @@ def normalize_prediction_history_df(df):
         normalized["evaluation_mode"] = "unknown"
     normalized["evaluation_mode"] = normalized["evaluation_mode"].fillna("unknown").astype(str)
 
+    if "model_variant" not in normalized.columns:
+        normalized["model_variant"] = "legacy"
+    normalized["model_variant"] = normalized["model_variant"].fillna("legacy").astype(str)
+
     if "hit_rate_any" not in normalized.columns:
         normalized["hit_rate_any"] = normalized["predicted_top_k_hit_count"].fillna(0) >= 1
     else:
@@ -753,8 +768,8 @@ def normalize_prediction_history_df(df):
         normalized["date"] = normalized["date"].astype(str)
 
     normalized = normalized.sort_values(
-        ["draw_id", "evaluation_mode", "fold_index"],
-        ascending=[True, True, True],
+        ["draw_id", "evaluation_mode", "model_variant", "fold_index"],
+        ascending=[True, True, True, True],
         na_position="first",
     ).reset_index(drop=True)
     return normalized
@@ -801,6 +816,23 @@ def format_metric(value, digits=4):
     if value is None:
         return "-"
     return f"{value:.{digits}f}"
+
+
+def format_p_value(value):
+    if value is None:
+        return "-"
+    if float(value) < 0.001:
+        return "<0.001"
+    return f"{float(value):.3f}"
+
+
+def format_model_variant_label(value):
+    if not value:
+        return "-"
+    try:
+        return get_model_variant_label(value)
+    except Exception:
+        return str(value)
 
 
 def format_number_list(values):
@@ -862,6 +894,7 @@ def render_manifest_section(manifest):
 
     st.subheader("🧾 Artifact Manifest")
     metrics_summary = manifest.get("metrics_summary", {})
+    decision_summary = manifest.get("decision_summary") or metrics_summary.get("decision_summary") or {}
     data_fingerprint = manifest.get("data_fingerprint", {})
     training_context = manifest.get("training_context", {})
     runtime_environment = manifest.get("runtime_environment", {})
@@ -908,6 +941,7 @@ def render_manifest_section(manifest):
             "preset="
             f"{training_context.get('preset', '-')}, "
             f"seed={training_context.get('seed', '-')}, "
+            f"saved_variant={training_context.get('model_variant', '-')}, "
             f"lookback={training_context.get('lookback_window', '-')}, "
             f"feature_cols={training_context.get('feature_column_count', '-')}"
         )
@@ -926,6 +960,13 @@ def render_manifest_section(manifest):
             f"tensorflow={dependencies.get('tensorflow', '-')}, "
             f"pandas={dependencies.get('pandas', '-')}, "
             f"numpy={dependencies.get('numpy', '-')}"
+        )
+    if decision_summary:
+        st.caption(
+            "recommended_variant="
+            f"{format_model_variant_label(decision_summary.get('recommended_variant'))}, "
+            f"best_logloss_variant={format_model_variant_label(decision_summary.get('best_variant_by_logloss'))}, "
+            f"promote_candidate={decision_summary.get('should_promote_candidate', '-')}"
         )
 
     with st.expander("Manifest 詳細", expanded=False):
@@ -987,6 +1028,34 @@ def render_walk_forward_section(report):
     st.write("##### Walk-Forward Summary")
     st.dataframe(pd.DataFrame(main_rows).set_index("モデル"), use_container_width=True)
 
+    variant_rows = build_variant_summary_rows(report)
+    if variant_rows:
+        st.write("##### Variant Comparison")
+        st.dataframe(pd.DataFrame(variant_rows), use_container_width=True)
+
+    statistical_rows = build_statistical_test_rows(report)
+    if statistical_rows:
+        st.write("##### Statistical Tests")
+        statistical_df = pd.DataFrame(statistical_rows)
+        if not statistical_df.empty:
+            statistical_df["mean_delta"] = statistical_df["mean_delta"].map(format_metric)
+            statistical_df["ci_lower"] = statistical_df["ci_lower"].map(format_metric)
+            statistical_df["ci_upper"] = statistical_df["ci_upper"].map(format_metric)
+            statistical_df["p_value"] = statistical_df["p_value"].map(format_p_value)
+        st.dataframe(statistical_df, use_container_width=True)
+
+    decision_summary = report.get("decision_summary") or {}
+    if decision_summary:
+        st.write("##### Promotion Decision")
+        st.caption(
+            "saved_variant="
+            f"{format_model_variant_label(decision_summary.get('production_variant'))}, "
+            f"recommended_variant={format_model_variant_label(decision_summary.get('recommended_variant'))}, "
+            f"best_variant_by_logloss={format_model_variant_label(decision_summary.get('best_variant_by_logloss'))}, "
+            f"promote_candidate={decision_summary.get('should_promote_candidate', '-')}"
+        )
+        st.caption("rule: multihot が best static と legacy の両方に対して CI/p-value 条件を満たした場合のみ昇格候補にします。")
+
     online_rows = [
         summary_entry_to_row(BASELINE_LABELS.get(name, name), summary)
         for name, summary in aggregate.get("online_baselines", {}).items()
@@ -1032,27 +1101,40 @@ def render_prediction_history_section(loto_type):
     st.caption(f"source={history_meta.get('format', '-')}, path={history_meta.get('path', '-')}")
 
     available_modes = ["all"] + sorted(history_df["evaluation_mode"].dropna().unique().tolist())
+    available_variants = ["all"] + sorted(history_df["model_variant"].dropna().unique().tolist())
     default_min_draw = int(history_df["draw_id"].min())
     default_max_draw = int(history_df["draw_id"].max())
 
-    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(5)
     with filter_col1:
         selected_mode = st.selectbox("evaluation_mode", available_modes, index=0)
     with filter_col2:
         draw_range = st.slider("draw_id 範囲", default_min_draw, default_max_draw, (default_min_draw, default_max_draw))
     with filter_col3:
-        recent_option = st.selectbox("直近N件表示", ["10", "20", "50", "全件"], index=3)
+        selected_variant = st.selectbox(
+            "model_variant",
+            available_variants,
+            index=0,
+            format_func=lambda value: "all" if value == "all" else get_model_variant_label(value),
+        )
     with filter_col4:
+        recent_option = st.selectbox("直近N件表示", ["10", "20", "50", "全件"], index=3)
+    with filter_col5:
         one_plus_only = st.checkbox("1個以上一致のみ表示", value=False)
 
     filtered = history_df.copy()
     if selected_mode != "all":
         filtered = filtered[filtered["evaluation_mode"] == selected_mode]
+    if selected_variant != "all":
+        filtered = filtered[filtered["model_variant"] == selected_variant]
     filtered = filtered[filtered["draw_id"].between(draw_range[0], draw_range[1])]
     if one_plus_only:
         filtered = filtered[filtered["hit_rate_any"]]
 
-    filtered = filtered.sort_values(["draw_id", "evaluation_mode", "fold_index"], ascending=[False, True, True])
+    filtered = filtered.sort_values(
+        ["draw_id", "evaluation_mode", "model_variant", "fold_index"],
+        ascending=[False, True, True, True],
+    )
     if recent_option != "全件":
         filtered = filtered.head(int(recent_option))
 
@@ -1089,6 +1171,7 @@ def render_prediction_history_section(loto_type):
     display_df["predicted_top_k"] = display_df["predicted_top_k"].apply(format_number_list)
     display_df["predicted_top_k_hit_numbers"] = display_df["predicted_top_k_hit_numbers"].apply(format_number_list)
     display_df["fold_index"] = display_df["fold_index"].apply(lambda value: "-" if pd.isna(value) else int(value))
+    display_df["model_variant"] = display_df["model_variant"].map(get_model_variant_label)
     display_df = display_df[
         [
             "draw_id",
@@ -1097,6 +1180,7 @@ def render_prediction_history_section(loto_type):
             "predicted_top_k",
             "predicted_top_k_hit_numbers",
             "predicted_top_k_hit_count",
+            "model_variant",
             "evaluation_mode",
             "fold_index",
         ]
@@ -1108,6 +1192,7 @@ def render_prediction_history_section(loto_type):
             "predicted_top_k": "predicted_top_k",
             "predicted_top_k_hit_numbers": "predicted_top_k_hit_numbers",
             "predicted_top_k_hit_count": "hit_count",
+            "model_variant": "model_variant",
             "evaluation_mode": "evaluation_mode",
             "fold_index": "fold_index",
         }
@@ -1123,6 +1208,7 @@ def render_prediction_history_section(loto_type):
         format_func=lambda index: (
             f"第{int(detail_source.iloc[index]['draw_id'])}回 "
             f"{detail_source.iloc[index]['date']} "
+            f"{format_model_variant_label(detail_source.iloc[index]['model_variant'])} "
             f"{detail_source.iloc[index]['evaluation_mode']} "
             f"fold={('-' if pd.isna(detail_source.iloc[index]['fold_index']) else int(detail_source.iloc[index]['fold_index']))}"
         ),
@@ -1159,7 +1245,25 @@ def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols, ma
         st.info("Kaggle 同期をやり直すか、学習を再実行して artifact 世代を揃えてください。")
         st.stop()
 
-    integrity_issues = inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler)
+    saved_model_variant = get_saved_model_variant(manifest=manifest)
+    prepared_dataset = None
+    try:
+        prepared_recent_input, prepared_dataset = build_recent_model_input(df, loto_type, saved_model_variant, scaler)
+    except Exception as exc:
+        st.error("⚠️ manifest 上の model variant に対する入力再構築に失敗しました。")
+        st.write(str(exc))
+        st.info("artifact 世代の不整合が疑われます。再学習または Kaggle 同期を実施してください。")
+        st.stop()
+
+    integrity_issues = inspect_prediction_artifact_integrity(
+        loto_type,
+        df,
+        feature_cols,
+        model,
+        scaler,
+        manifest=manifest,
+        prepared_dataset=prepared_dataset,
+    )
     if integrity_issues:
         render_prediction_integrity_issues(loto_type, integrity_issues, manifest)
         st.stop()
@@ -1176,9 +1280,13 @@ def render_prediction_tab(loto_type, config, df, model, scaler, feature_cols, ma
 
     st.markdown("---")
     st.write(f"対象 loto_type: `{loto_type}`")
-    features_df = df[feature_cols]
-    scaled_data = scaler.transform(features_df)
-    recent_input = np.array([scaled_data[-LOOKBACK_WINDOW:]], dtype=np.float32)
+    st.caption(
+        "saved_variant="
+        f"{get_model_variant_label(saved_model_variant)} ({saved_model_variant}), "
+        f"feature_strategy={resolve_feature_strategy_from_manifest(manifest)}, "
+        f"feature_cols={len(feature_cols)}"
+    )
+    recent_input = prepared_recent_input
     probs = model(tf.convert_to_tensor(recent_input), training=False).numpy()[0]
 
     prob_df = pd.DataFrame({"Number": np.arange(1, config["max_num"] + 1), "Probability": probs})

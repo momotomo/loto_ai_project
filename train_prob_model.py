@@ -22,6 +22,17 @@ from config import (
     MANIFEST_SCHEMA_VERSION,
     PREPROCESSING_VERSION,
 )
+from evaluation_statistics import build_logloss_comparison_summary
+from model_variants import (
+    DEFAULT_MODEL_VARIANT,
+    LEGACY_MODEL_VARIANT,
+    MODEL_VARIANT_CHOICES,
+    MULTIHOT_MODEL_VARIANT,
+    create_multi_hot as build_target_multi_hot,
+    get_model_variant_label,
+    prepare_model_dataset,
+    resolve_model_variant,
+)
 
 # フリーズ回避
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -40,6 +51,9 @@ DEFAULT_FINAL_EPOCHS = 12
 DEFAULT_BATCH_SIZE = 64
 DEFAULT_PATIENCE = 2
 DEFAULT_SEED = 42
+DEFAULT_STATISTICAL_ALPHA = 0.05
+DEFAULT_BOOTSTRAP_SAMPLES = 2000
+DEFAULT_PERMUTATION_SAMPLES = 2000
 EPSILON = 1e-6
 STATIC_BASELINE_NAMES = ["uniform", "frequency", "gap"]
 ONLINE_BASELINE_NAMES = ["frequency_online", "gap_online"]
@@ -90,14 +104,7 @@ def set_reproducible_seed(seed):
 
 
 def create_multi_hot(targets, max_num):
-    vectors = []
-    for nums in targets:
-        vec = np.zeros(max_num, dtype=np.float32)
-        for n in nums:
-            if 1 <= int(n) <= max_num:
-                vec[int(n) - 1] = 1.0
-        vectors.append(vec)
-    return np.array(vectors, dtype=np.float32)
+    return build_target_multi_hot(targets, max_num)
 
 
 def sanitize_probabilities(preds):
@@ -160,6 +167,33 @@ def calculate_metrics(preds, targets, k):
     }
 
 
+def calculate_per_draw_logloss(preds, targets):
+    preds = sanitize_probabilities(preds)
+    targets = np.asarray(targets, dtype=np.float32)
+    return -np.mean(targets * np.log(preds) + (1.0 - targets) * np.log(1.0 - preds), axis=1)
+
+
+def parse_model_variants_csv(value):
+    variants = []
+    for chunk in str(value or "").split(","):
+        normalized = chunk.strip()
+        if not normalized:
+            continue
+        resolved = resolve_model_variant(normalized)
+        if resolved not in variants:
+            variants.append(resolved)
+    return variants
+
+
+def resolve_evaluation_model_variants(args):
+    variants = parse_model_variants_csv(args.evaluation_model_variants)
+    if not variants:
+        variants = [DEFAULT_MODEL_VARIANT, MULTIHOT_MODEL_VARIANT]
+    if args.model_variant not in variants:
+        variants.insert(0, args.model_variant)
+    return variants
+
+
 def target_vector_to_numbers(target_vector):
     indices = np.flatnonzero(np.asarray(target_vector, dtype=np.float32) > 0.5)
     return [int(index) + 1 for index in indices.tolist()]
@@ -170,6 +204,7 @@ def build_prediction_history_records(
     preds,
     targets,
     loto_type,
+    model_variant,
     pick_count,
     max_num,
     sample_start,
@@ -192,6 +227,7 @@ def build_prediction_history_records(
                 "draw_id": int(draw_row["draw_id"]),
                 "date": str(draw_row["date"]),
                 "loto_type": loto_type,
+                "model_variant": model_variant,
                 "evaluation_mode": evaluation_mode,
                 "fold_index": int(fold_index) if fold_index is not None else None,
                 "actual_numbers": actual_numbers,
@@ -220,7 +256,7 @@ def build_prediction_history_artifact(loto_type, records, generated_at, bundle_i
         ),
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "bundle_id": bundle_id,
         "generated_at": generated_at,
@@ -263,7 +299,7 @@ def summarize_metric_series(values):
     }
 
 
-def build_prob_model(input_shape, max_num):
+def build_prob_model(input_shape, max_num, compile_model=True):
     model = Sequential(
         [
             Input(shape=input_shape),
@@ -277,13 +313,14 @@ def build_prob_model(input_shape, max_num):
             Dense(max_num, activation="sigmoid"),
         ]
     )
-    model.compile(optimizer="adam", loss="binary_crossentropy")
+    if compile_model:
+        model.compile(optimizer="adam", loss="binary_crossentropy")
     return model
 
 
 def fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience):
     tf.keras.backend.clear_session()
-    model = build_prob_model((X_train.shape[1], X_train.shape[2]), max_num)
+    model = build_prob_model((X_train.shape[1], X_train.shape[2]), max_num, compile_model=epochs > 0)
     if epochs <= 0:
         return model
 
@@ -442,22 +479,8 @@ def build_sample_range_metadata(df, sample_start, sample_end):
     return build_range_metadata(df, start_row, end_row)
 
 
-def prepare_dataset(df, pick_count, max_num):
-    target_cols = [f"num{i + 1}" for i in range(pick_count)]
-    features_df = df.drop(["draw_id", "date"], axis=1)
-    other_cols = [column for column in features_df.columns if column not in target_cols]
-    feature_cols = target_cols + other_cols
-    features_df = features_df[feature_cols]
-
-    raw_features = features_df.to_numpy(dtype=np.float32)
-    target_numbers = df[target_cols].to_numpy(dtype=np.int32)
-    targets = create_multi_hot(target_numbers[LOOKBACK_WINDOW:], max_num)
-
-    return {
-        "feature_cols": feature_cols,
-        "raw_features": raw_features,
-        "targets": targets,
-    }
+def prepare_dataset(df, loto_type, model_variant):
+    return prepare_model_dataset(df, loto_type, model_variant)
 
 
 def fit_scaler_for_split(raw_features, train_sample_count):
@@ -478,6 +501,7 @@ def evaluate_split(
     raw_features,
     targets,
     loto_type,
+    model_variant,
     pick_count,
     max_num,
     train_end,
@@ -504,6 +528,7 @@ def evaluate_split(
         preds=preds_test,
         targets=y_test,
         loto_type=loto_type,
+        model_variant=model_variant,
         pick_count=pick_count,
         max_num=max_num,
         sample_start=train_end,
@@ -529,6 +554,7 @@ def evaluate_walk_forward(
     raw_features,
     targets,
     loto_type,
+    model_variant,
     pick_count,
     max_num,
     initial_train_fraction,
@@ -569,6 +595,7 @@ def evaluate_walk_forward(
             raw_features=raw_features,
             targets=targets,
             loto_type=loto_type,
+            model_variant=model_variant,
             pick_count=pick_count,
             max_num=max_num,
             train_end=train_end,
@@ -619,6 +646,14 @@ def evaluate_walk_forward(
             category_target_map[name] = targets_by_name[key]
         aggregate[category] = aggregate_named_reports(category_metric_map, category_pred_map, category_target_map, pick_count)
 
+    comparison_payload = {
+        "targets": np.concatenate(targets_by_name["model"], axis=0),
+        "model_preds": np.concatenate(preds_by_name["model"], axis=0),
+        "static_baseline_preds": {
+            name: np.concatenate(preds_by_name[f"static_baselines:{name}"], axis=0) for name in STATIC_BASELINE_NAMES
+        },
+    }
+
     return (
         {
             "settings": {
@@ -631,6 +666,7 @@ def evaluate_walk_forward(
             "aggregate": aggregate,
         },
         history_records,
+        comparison_payload,
     )
 
 
@@ -698,11 +734,15 @@ def get_git_commit():
         return None
 
 
-def build_training_context(args, loto_type, feature_cols, pick_count, max_num):
+def build_training_context(args, loto_type, feature_cols, pick_count, max_num, dataset_metadata):
     return {
         "preset": args.preset,
         "seed": int(args.seed),
         "loto_type": loto_type,
+        "model_variant": args.model_variant,
+        "evaluation_model_variants": list(args.evaluation_model_variants),
+        "feature_strategy": dataset_metadata.get("feature_strategy"),
+        "feature_channels": dataset_metadata.get("feature_channels"),
         "lookback_window": int(LOOKBACK_WINDOW),
         "pick_count": int(pick_count),
         "max_num": int(max_num),
@@ -721,6 +761,157 @@ def build_training_context(args, loto_type, feature_cols, pick_count, max_num):
             "skip_legacy_holdout": bool(args.skip_legacy_holdout),
             "skip_walk_forward": bool(args.skip_walk_forward),
         },
+    }
+
+
+def build_model_variant_payload(variant_name, dataset, legacy_holdout, walk_forward, final_artifact_status=None):
+    return {
+        "variant": variant_name,
+        "label": get_model_variant_label(variant_name),
+        "dataset_variant": variant_name,
+        "feature_strategy": dataset["dataset_metadata"].get("feature_strategy"),
+        "feature_channels": dataset["dataset_metadata"].get("feature_channels"),
+        "feature_column_count": len(dataset["feature_cols"]),
+        "legacy_holdout": legacy_holdout,
+        "walk_forward": walk_forward,
+        "final_artifact_status": final_artifact_status,
+    }
+
+
+def rank_model_variants_by_logloss(model_variant_reports):
+    rankings = []
+    for variant_name, payload in model_variant_reports.items():
+        walk_forward = payload.get("walk_forward")
+        if walk_forward is not None:
+            logloss_mean = ((walk_forward["aggregate"]["model"]["metric_summary"]["logloss"]).get("mean"))
+        else:
+            legacy_holdout = payload.get("legacy_holdout")
+            logloss_mean = legacy_holdout["model"]["logloss"] if legacy_holdout else None
+        rankings.append(
+            {
+                "variant": variant_name,
+                "label": get_model_variant_label(variant_name),
+                "logloss_mean": logloss_mean,
+            }
+        )
+    return sorted(rankings, key=lambda item: float("inf") if item["logloss_mean"] is None else item["logloss_mean"])
+
+
+def build_statistical_tests(model_variant_reports, comparison_payloads, alpha, bootstrap_samples, permutation_samples, seed):
+    if not comparison_payloads:
+        return None
+
+    reference_variant = LEGACY_MODEL_VARIANT if LEGACY_MODEL_VARIANT in comparison_payloads else next(iter(comparison_payloads))
+    static_summary = model_variant_reports[reference_variant]["walk_forward"]["aggregate"]["static_baselines"]
+    best_static_name = min(
+        static_summary,
+        key=lambda name: static_summary[name]["metric_summary"]["logloss"]["mean"],
+    )
+    reference_targets = comparison_payloads[reference_variant]["targets"]
+    best_static_losses = calculate_per_draw_logloss(
+        comparison_payloads[reference_variant]["static_baseline_preds"][best_static_name],
+        reference_targets,
+    )
+    comparisons = {}
+
+    if LEGACY_MODEL_VARIANT in comparison_payloads:
+        comparisons["legacy_vs_best_static"] = build_logloss_comparison_summary(
+            calculate_per_draw_logloss(comparison_payloads[LEGACY_MODEL_VARIANT]["model_preds"], reference_targets),
+            best_static_losses,
+            candidate_name=LEGACY_MODEL_VARIANT,
+            reference_name=f"static_baseline:{best_static_name}",
+            confidence=1.0 - alpha,
+            n_bootstrap=bootstrap_samples,
+            n_permutations=permutation_samples,
+            seed=seed,
+        )
+
+    if MULTIHOT_MODEL_VARIANT in comparison_payloads:
+        comparisons["multihot_vs_best_static"] = build_logloss_comparison_summary(
+            calculate_per_draw_logloss(comparison_payloads[MULTIHOT_MODEL_VARIANT]["model_preds"], reference_targets),
+            best_static_losses,
+            candidate_name=MULTIHOT_MODEL_VARIANT,
+            reference_name=f"static_baseline:{best_static_name}",
+            confidence=1.0 - alpha,
+            n_bootstrap=bootstrap_samples,
+            n_permutations=permutation_samples,
+            seed=seed,
+        )
+
+    if LEGACY_MODEL_VARIANT in comparison_payloads and MULTIHOT_MODEL_VARIANT in comparison_payloads:
+        comparisons["multihot_vs_legacy"] = build_logloss_comparison_summary(
+            calculate_per_draw_logloss(comparison_payloads[MULTIHOT_MODEL_VARIANT]["model_preds"], reference_targets),
+            calculate_per_draw_logloss(comparison_payloads[LEGACY_MODEL_VARIANT]["model_preds"], reference_targets),
+            candidate_name=MULTIHOT_MODEL_VARIANT,
+            reference_name=LEGACY_MODEL_VARIANT,
+            confidence=1.0 - alpha,
+            n_bootstrap=bootstrap_samples,
+            n_permutations=permutation_samples,
+            seed=seed,
+        )
+
+    return {
+        "metric": "per_draw_logloss",
+        "test_source": "walk_forward_predictions",
+        "best_static_baseline_name": best_static_name,
+        "alpha": alpha,
+        "comparisons": comparisons,
+    }
+
+
+def build_adoption_decision(model_variant_reports, statistical_tests, production_variant, alpha):
+    rankings = rank_model_variants_by_logloss(model_variant_reports)
+    recommended_variant = production_variant
+    decision_flags = {
+        "beats_best_static_with_ci": False,
+        "beats_best_static_with_p_value": False,
+        "beats_legacy_with_ci": False,
+        "beats_legacy_with_p_value": False,
+    }
+    reason_codes = []
+
+    comparisons = (statistical_tests or {}).get("comparisons") or {}
+    multihot_vs_best_static = comparisons.get("multihot_vs_best_static")
+    multihot_vs_legacy = comparisons.get("multihot_vs_legacy")
+
+    if multihot_vs_best_static is None:
+        reason_codes.append("multihot_vs_best_static_missing")
+    else:
+        ci = multihot_vs_best_static.get("bootstrap_ci") or {}
+        p_value = ((multihot_vs_best_static.get("permutation_test") or {}).get("p_value"))
+        decision_flags["beats_best_static_with_ci"] = ci.get("upper") is not None and ci["upper"] < 0.0
+        decision_flags["beats_best_static_with_p_value"] = p_value is not None and p_value < alpha
+
+    if multihot_vs_legacy is None:
+        reason_codes.append("multihot_vs_legacy_missing")
+    else:
+        ci = multihot_vs_legacy.get("bootstrap_ci") or {}
+        p_value = ((multihot_vs_legacy.get("permutation_test") or {}).get("p_value"))
+        decision_flags["beats_legacy_with_ci"] = ci.get("upper") is not None and ci["upper"] < 0.0
+        decision_flags["beats_legacy_with_p_value"] = p_value is not None and p_value < alpha
+
+    should_promote_multihot = all(decision_flags.values())
+    if should_promote_multihot:
+        recommended_variant = MULTIHOT_MODEL_VARIANT
+        reason_codes.append("promote_multihot")
+    else:
+        reason_codes.append(f"retain_production_variant:{production_variant}")
+
+    return {
+        "candidate_variant": MULTIHOT_MODEL_VARIANT,
+        "production_variant": production_variant,
+        "recommended_variant": recommended_variant,
+        "best_variant_by_logloss": rankings[0]["variant"] if rankings else None,
+        "rankings": rankings,
+        "metric": "logloss",
+        "alpha": alpha,
+        "rule": {
+            "multihot_vs_best_static": "bootstrap_ci.upper < 0 and permutation_test.p_value < alpha",
+            "multihot_vs_legacy": "bootstrap_ci.upper < 0 and permutation_test.p_value < alpha",
+        },
+        "flags": decision_flags,
+        "should_promote_candidate": should_promote_multihot,
+        "reason_codes": reason_codes,
     }
 
 
@@ -768,6 +959,9 @@ def build_manifest(
     df,
     legacy_holdout,
     walk_forward_report,
+    model_variant_reports,
+    statistical_tests,
+    decision_summary,
     eval_report_path,
     final_artifact_status,
     prediction_history_path,
@@ -799,6 +993,8 @@ def build_manifest(
         "evaluation_source": primary_evaluation["source"],
         "fold_count": primary_evaluation["fold_count"],
         "test_window": primary_evaluation["test_window"],
+        "saved_model_variant": training_context.get("model_variant"),
+        "recommended_model_variant": (decision_summary or {}).get("recommended_variant"),
         "primary_model": primary_model,
         "walk_forward_model": primary_model if primary_evaluation["source"] == "walk_forward" else None,
         "best_static_baseline": {
@@ -812,6 +1008,7 @@ def build_manifest(
                 "mean_overlap_top_k": model_summary["mean_overlap_top_k"]["mean"] - best_static["mean_overlap_top_k"]["mean"],
             },
         },
+        "decision_summary": decision_summary,
         "final_artifact_status": final_artifact_status,
     }
     artifact_paths = {
@@ -834,6 +1031,17 @@ def build_manifest(
         "training_context": training_context,
         "runtime_environment": runtime_environment,
         "metrics_summary": metrics_summary,
+        "model_variants": {
+            variant_name: {
+                "label": payload.get("label"),
+                "feature_strategy": payload.get("feature_strategy"),
+                "feature_column_count": payload.get("feature_column_count"),
+                "final_artifact_status": payload.get("final_artifact_status"),
+            }
+            for variant_name, payload in model_variant_reports.items()
+        },
+        "statistical_tests": statistical_tests,
+        "decision_summary": decision_summary,
         "artifacts": artifact_paths,
         "artifact_metadata": collect_file_metadata(artifact_paths),
         "prediction_history_path": prediction_history_path,
@@ -865,82 +1073,122 @@ def train_for_type(loto_type, args):
         return False
 
     df = pd.read_csv(df_path).sort_values("draw_id").reset_index(drop=True)
-    dataset = prepare_dataset(df, config["pick_count"], config["max_num"])
-    raw_features = dataset["raw_features"]
-    targets = dataset["targets"]
-    feature_cols = dataset["feature_cols"]
     latest_draw_id = int(df.iloc[-1]["draw_id"])
-    data_fingerprint = build_data_fingerprint(
-        processed_path=df_path,
-        raw_path=raw_path if os.path.exists(raw_path) else None,
-        row_count=len(df),
-        sample_count=len(targets),
-        latest_draw_id=latest_draw_id,
-        preprocessing_version=PREPROCESSING_VERSION,
-    )
+    runtime_environment = collect_runtime_environment()
+    generated_at = datetime.now(timezone.utc).isoformat()
+    bundle_id = build_bundle_id(loto_type, generated_at)
+    prepared_datasets = {}
+    model_variant_reports = {}
+    walk_forward_comparison_payloads = {}
+    prediction_history_records = []
+    data_fingerprint = None
+
+    print(f"\n--- {loto_type.upper()} 確率モデル学習 ＆ 信用度評価 ---")
+    for variant_name in args.evaluation_model_variants:
+        dataset = prepare_dataset(df, loto_type, variant_name)
+        prepared_datasets[variant_name] = dataset
+        raw_features = dataset["raw_features"]
+        targets = dataset["targets"]
+
+        if data_fingerprint is None:
+            data_fingerprint = build_data_fingerprint(
+                processed_path=df_path,
+                raw_path=raw_path if os.path.exists(raw_path) else None,
+                row_count=len(df),
+                sample_count=len(targets),
+                latest_draw_id=latest_draw_id,
+                preprocessing_version=PREPROCESSING_VERSION,
+            )
+
+        if len(targets) <= args.walk_forward_test_window:
+            raise ValueError(f"[{loto_type}] データ量が不足しています。samples={len(targets)}")
+
+        print(f"  [{variant_name}] {get_model_variant_label(variant_name)}")
+        variant_legacy_holdout = None
+        if args.skip_legacy_holdout:
+            print(f"    - [{variant_name}] legacy holdout をスキップします。")
+        else:
+            holdout_split = max(int(len(targets) * 0.8), args.walk_forward_test_window)
+            holdout_split = min(holdout_split, len(targets) - args.walk_forward_test_window)
+            variant_legacy_holdout, _, _, _, _, _, legacy_history_records = evaluate_split(
+                df=df,
+                raw_features=raw_features,
+                targets=targets,
+                loto_type=loto_type,
+                model_variant=variant_name,
+                pick_count=config["pick_count"],
+                max_num=config["max_num"],
+                train_end=holdout_split,
+                test_end=len(targets),
+                epochs=args.eval_epochs,
+                batch_size=args.batch_size,
+                patience=args.patience,
+                evaluation_mode="legacy_holdout",
+            )
+            prediction_history_records.extend(legacy_history_records)
+
+        variant_walk_forward = None
+        if args.skip_walk_forward:
+            print(f"    - [{variant_name}] walk-forward をスキップします。")
+        else:
+            variant_walk_forward, walk_forward_history_records, comparison_payload = evaluate_walk_forward(
+                df=df,
+                raw_features=raw_features,
+                targets=targets,
+                loto_type=loto_type,
+                model_variant=variant_name,
+                pick_count=config["pick_count"],
+                max_num=config["max_num"],
+                initial_train_fraction=args.initial_train_fraction,
+                test_window=args.walk_forward_test_window,
+                max_folds=args.walk_forward_folds,
+                epochs=args.eval_epochs,
+                batch_size=args.batch_size,
+                patience=args.patience,
+            )
+            walk_forward_comparison_payloads[variant_name] = comparison_payload
+            prediction_history_records.extend(walk_forward_history_records)
+
+        model_variant_reports[variant_name] = build_model_variant_payload(
+            variant_name=variant_name,
+            dataset=dataset,
+            legacy_holdout=variant_legacy_holdout,
+            walk_forward=variant_walk_forward,
+        )
+
+    production_dataset = prepared_datasets[args.model_variant]
+    raw_features = production_dataset["raw_features"]
+    targets = production_dataset["targets"]
+    feature_cols = production_dataset["feature_cols"]
     training_context = build_training_context(
         args=args,
         loto_type=loto_type,
         feature_cols=feature_cols,
         pick_count=config["pick_count"],
         max_num=config["max_num"],
+        dataset_metadata=production_dataset["dataset_metadata"],
     )
-    runtime_environment = collect_runtime_environment()
-
-    if len(targets) <= args.walk_forward_test_window:
-        raise ValueError(f"[{loto_type}] データ量が不足しています。samples={len(targets)}")
-
-    generated_at = datetime.now(timezone.utc).isoformat()
-    bundle_id = build_bundle_id(loto_type, generated_at)
-
-    print(f"\n--- {loto_type.upper()} 確率モデル学習 ＆ 信用度評価 ---")
-    legacy_holdout = None
-    prediction_history_records = []
-    if args.skip_legacy_holdout:
-        print("  [1/4] legacy holdout をスキップします。")
-    else:
-        print("  [1/4] legacy holdout を計算中...")
-        holdout_split = max(int(len(targets) * 0.8), args.walk_forward_test_window)
-        holdout_split = min(holdout_split, len(targets) - args.walk_forward_test_window)
-        legacy_holdout, _, _, _, _, _, legacy_history_records = evaluate_split(
-            df=df,
-            raw_features=raw_features,
-            targets=targets,
-            loto_type=loto_type,
-            pick_count=config["pick_count"],
-            max_num=config["max_num"],
-            train_end=holdout_split,
-            test_end=len(targets),
-            epochs=args.eval_epochs,
-            batch_size=args.batch_size,
-            patience=args.patience,
-            evaluation_mode="legacy_holdout",
-        )
-        prediction_history_records.extend(legacy_history_records)
-
-    walk_forward = None
-    if args.skip_walk_forward:
-        print("  [2/4] walk-forward をスキップします。")
-    else:
-        print("  [2/4] walk-forward を計算中...")
-        walk_forward, walk_forward_history_records = evaluate_walk_forward(
-            df=df,
-            raw_features=raw_features,
-            targets=targets,
-            loto_type=loto_type,
-            pick_count=config["pick_count"],
-            max_num=config["max_num"],
-            initial_train_fraction=args.initial_train_fraction,
-            test_window=args.walk_forward_test_window,
-            max_folds=args.walk_forward_folds,
-            epochs=args.eval_epochs,
-            batch_size=args.batch_size,
-            patience=args.patience,
-        )
-        prediction_history_records.extend(walk_forward_history_records)
-
+    primary_variant_payload = model_variant_reports[args.model_variant]
+    legacy_holdout = primary_variant_payload["legacy_holdout"]
+    walk_forward = primary_variant_payload["walk_forward"]
     compat_model_metrics, compat_static_baselines, compat_online_baselines = build_compat_report_sections(
         legacy_holdout, walk_forward
+    )
+    statistical_tests = None
+    if not args.skip_walk_forward:
+        statistical_tests = build_statistical_tests(
+            model_variant_reports=model_variant_reports,
+            comparison_payloads=walk_forward_comparison_payloads,
+            alpha=args.statistical_alpha,
+            bootstrap_samples=args.bootstrap_samples,
+            permutation_samples=args.permutation_samples,
+            seed=args.seed,
+        )
+    decision_summary = build_adoption_decision(
+        model_variant_reports=model_variant_reports,
+        statistical_tests=statistical_tests,
+        production_variant=args.model_variant,
+        alpha=args.statistical_alpha,
     )
 
     report = {
@@ -956,6 +1204,8 @@ def train_for_type(loto_type, args):
         "run_options": {
             "preset": args.preset,
             "seed": args.seed,
+            "model_variant": args.model_variant,
+            "evaluation_model_variants": args.evaluation_model_variants,
             "skip_final_train": args.skip_final_train,
             "skip_legacy_holdout": args.skip_legacy_holdout,
             "skip_walk_forward": args.skip_walk_forward,
@@ -964,12 +1214,18 @@ def train_for_type(loto_type, args):
             "final_epochs": args.final_epochs,
             "batch_size": args.batch_size,
             "patience": args.patience,
+            "bootstrap_samples": args.bootstrap_samples,
+            "permutation_samples": args.permutation_samples,
+            "statistical_alpha": args.statistical_alpha,
         },
         "Model (LSTM)": compat_model_metrics,
         "Baselines": compat_static_baselines,
         "Online Baselines": compat_online_baselines,
         "legacy_holdout": legacy_holdout,
         "walk_forward": walk_forward,
+        "model_variants": model_variant_reports,
+        "statistical_tests": statistical_tests,
+        "decision_summary": decision_summary,
     }
     eval_report_path = os.path.join(DATA_DIR, f"eval_report_{loto_type}.json")
     save_json(eval_report_path, report)
@@ -1002,6 +1258,9 @@ def train_for_type(loto_type, args):
         patience=args.patience,
         skip_final_train=args.skip_final_train,
     )
+    model_variant_reports[args.model_variant]["final_artifact_status"] = final_artifact_status
+    report["model_variants"][args.model_variant]["final_artifact_status"] = final_artifact_status
+    save_json(eval_report_path, report)
 
     print("  [4/4] manifest を生成中...")
     manifest = build_manifest(
@@ -1009,6 +1268,9 @@ def train_for_type(loto_type, args):
         df=df,
         legacy_holdout=legacy_holdout,
         walk_forward_report=walk_forward,
+        model_variant_reports=model_variant_reports,
+        statistical_tests=statistical_tests,
+        decision_summary=decision_summary,
         eval_report_path=eval_report_path,
         final_artifact_status=final_artifact_status,
         prediction_history_path=prediction_history_path,
@@ -1038,6 +1300,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Leak-free training with legacy holdout and walk-forward evaluation.")
     parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
     parser.add_argument("--preset", choices=sorted(PRESET_CONFIGS.keys()), default="default")
+    parser.add_argument("--model_variant", choices=sorted(MODEL_VARIANT_CHOICES), default=DEFAULT_MODEL_VARIANT)
+    parser.add_argument(
+        "--evaluation_model_variants",
+        default="legacy,multihot",
+        help="評価対象 variant をカンマ区切りで指定 (例: legacy,multihot)",
+    )
     parser.add_argument("--initial_train_fraction", type=float, default=DEFAULT_INITIAL_TRAIN_FRACTION)
     parser.add_argument("--walk_forward_test_window", type=int, default=DEFAULT_WALK_FORWARD_TEST_WINDOW)
     parser.add_argument("--walk_forward_folds", type=int, default=None)
@@ -1045,6 +1313,9 @@ def parse_args():
     parser.add_argument("--final_epochs", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--patience", type=int, default=None)
+    parser.add_argument("--bootstrap_samples", type=int, default=DEFAULT_BOOTSTRAP_SAMPLES)
+    parser.add_argument("--permutation_samples", type=int, default=DEFAULT_PERMUTATION_SAMPLES)
+    parser.add_argument("--statistical_alpha", type=float, default=DEFAULT_STATISTICAL_ALPHA)
     parser.add_argument("--skip_final_train", action="store_true")
     parser.add_argument("--skip_legacy_holdout", action="store_true")
     parser.add_argument("--skip_walk_forward", action="store_true")
@@ -1054,6 +1325,8 @@ def parse_args():
 
 def main():
     args = apply_preset(parse_args())
+    args.model_variant = resolve_model_variant(args.model_variant)
+    args.evaluation_model_variants = resolve_evaluation_model_variants(args)
     if args.skip_legacy_holdout and args.skip_walk_forward:
         raise SystemExit("legacy_holdout と walk_forward を同時に skip することはできません。")
     set_reproducible_seed(args.seed)

@@ -3,8 +3,8 @@
 ## 保存場所
 - `data/*_raw.csv`: 取得した生データ。
 - `data/*_processed.csv`: 特徴量追加後の学習入力。
-- `data/eval_report_{loto_type}.json`: 評価レポート。`legacy_holdout` と `walk_forward` を含む。
-- `data/manifest_{loto_type}.json`: 生成日時、学習レンジ、最新 draw、指標要約、git commit、data hash、seed、dependency versions。
+- `data/eval_report_{loto_type}.json`: 評価レポート。`legacy_holdout` / `walk_forward` に加え、`model_variants`、`statistical_tests`、`decision_summary` を含む。
+- `data/manifest_{loto_type}.json`: 生成日時、学習レンジ、最新 draw、指標要約、git commit、data hash、seed、dependency versions、saved/recommended model variant。
 - `data/prediction_history_{loto_type}.json`: 評価対象 draw ごとの予測上位番号と実当選番号の照合履歴。
 - `data/*_feature_cols.json`: 学習時の特徴量列順。
 - `models/*_prob.keras`: 本番推論用モデル。
@@ -22,6 +22,11 @@
   - `walk_forward.settings`
   - `walk_forward.folds`
   - `walk_forward.aggregate`
+  - `model_variants`
+  - `statistical_tests`
+  - `decision_summary`
+  - `run_options.model_variant`
+  - `run_options.evaluation_model_variants`
 
 ## manifest の要点
 - `schema_version`
@@ -39,11 +44,17 @@
 - `training_context`
   - `preset`
   - `seed`
+  - `model_variant`
+  - `evaluation_model_variants`
+  - `feature_strategy`
+  - `feature_channels`
   - `hyperparameters`
 - `runtime_environment`
   - `python_version`
   - `dependencies`
 - `metrics_summary`
+  - `saved_model_variant`
+  - `recommended_model_variant`
 - `artifacts`
 - `artifact_metadata`
 - `prediction_history_path`
@@ -58,7 +69,7 @@
 - `loto_type`
 - `record_count`
 - `records[]`
-  - `draw_id`, `date`, `evaluation_mode`, `fold_index`
+  - `draw_id`, `date`, `model_variant`, `evaluation_mode`, `fold_index`
   - `actual_numbers`
   - `predicted_top_k`
   - `predicted_top_k_hit_count`
@@ -72,9 +83,12 @@
 - `eval_report` と `manifest` は軽量なので UI / Kaggle 同期の主対象。
 - `runs/` は最新 bundle の置き場ではなく、実験単位の追跡台帳として使う。
 - `prediction_history` は集計指標の根拠を draw 単位で見返すための artifact。Streamlit の「✅ 実績との照合」タブが主な参照先。
+- `model_variants` は評価用比較台帳で、保存済み本番 artifact は `training_context.model_variant` と `metrics_summary.saved_model_variant` を見る。
+- `statistical_tests` は draw 単位 logloss 差の CI / permutation test を保存する。運用更新の判定は `decision_summary` を参照する。
 - live 予測履歴は今回は保存しないが、将来は `pending/resolved` の 2 段階で別 artifact に拡張できるよう JSON 形式を分離している。
 - モデル本体と scaler は再生成可能だが、UI 起動には必要。
 - Streamlit の予測タブは `processed.csv` / `feature_cols.json` / `scaler.pkl` / `model.keras` の世代が揃っている前提。Kaggle 同期ではこれらを一時ディレクトリにまとめて取得してから最後に入れ替える。
+- multihot artifact では `feature_cols.json` が派生特徴名の並びを持ち、UI / CLI は manifest の `model_variant` を使って同じ並びの入力を再構築する。
 - manifest の `artifact_metadata` は model/scaler/feature_cols/eval_report/prediction_history の hash と size を保持する。manifest 自身の hash は自己参照を避けるため run tracking 側で見る。
 - GitHub Actions の翌営業日実行では対象 loto_type だけ更新される。同期側も loto_type ごとに完全 bundle を判定し、完全な loto_type だけを部分更新する。
 - clean sync は manifest の `artifact_schema_version` / `bundle_id` を基準に行う。更新対象 loto_type では新 bundle を temp copy で準備してから置換し、最後に不要な古いローカル artifact を掃除する。
