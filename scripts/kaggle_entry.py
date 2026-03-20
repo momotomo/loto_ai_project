@@ -16,6 +16,7 @@ DEFAULT_APP_DIR = Path(os.environ.get("KAGGLE_APP_DIR", "/kaggle/working/app"))
 ROOT_OUTPUT_DIR = Path("/kaggle/working")
 SUMMARY_PATH = Path("/kaggle/working/kaggle_run_summary.json")
 REQUIRED_PAYLOAD_FILES = (
+    "artifact_utils.py",
     "config.py",
     "data_collector.py",
     "train_prob_model.py",
@@ -168,6 +169,7 @@ def main():
         return
 
     train_preset = run_config.get("train_preset", "fast")
+    seed = int(run_config.get("seed", 42))
     skip_legacy_holdout = bool(run_config.get("skip_legacy_holdout", False))
 
     summary = {
@@ -199,6 +201,8 @@ def main():
                 loto_type,
                 "--preset",
                 train_preset,
+                "--seed",
+                str(seed),
             ]
             if skip_legacy_holdout:
                 train_command.append("--skip_legacy_holdout")

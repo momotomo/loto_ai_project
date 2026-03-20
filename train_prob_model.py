@@ -13,7 +13,15 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.layers import BatchNormalization, Dense, Dropout, Input, LSTM
 from tensorflow.keras.models import Sequential
 
-from config import ARTIFACT_SCHEMA_VERSION, LOOKBACK_WINDOW, LOTO_CONFIG
+from artifact_utils import build_data_fingerprint, collect_file_metadata, collect_runtime_environment
+from config import (
+    ARTIFACT_SCHEMA_VERSION,
+    EVAL_REPORT_SCHEMA_VERSION,
+    LOOKBACK_WINDOW,
+    LOTO_CONFIG,
+    MANIFEST_SCHEMA_VERSION,
+    PREPROCESSING_VERSION,
+)
 
 # フリーズ回避
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -52,8 +60,8 @@ PRESET_CONFIGS = {
     },
     "smoke": {
         "walk_forward_folds": 1,
-        "eval_epochs": 1,
-        "final_epochs": 1,
+        "eval_epochs": 0,
+        "final_epochs": 0,
         "batch_size": 32,
         "patience": 1,
     },
@@ -690,6 +698,32 @@ def get_git_commit():
         return None
 
 
+def build_training_context(args, loto_type, feature_cols, pick_count, max_num):
+    return {
+        "preset": args.preset,
+        "seed": int(args.seed),
+        "loto_type": loto_type,
+        "lookback_window": int(LOOKBACK_WINDOW),
+        "pick_count": int(pick_count),
+        "max_num": int(max_num),
+        "feature_column_count": int(len(feature_cols)),
+        "hyperparameters": {
+            "initial_train_fraction": args.initial_train_fraction,
+            "walk_forward_test_window": args.walk_forward_test_window,
+            "walk_forward_folds": args.walk_forward_folds,
+            "eval_epochs": args.eval_epochs,
+            "final_epochs": args.final_epochs,
+            "batch_size": args.batch_size,
+            "patience": args.patience,
+        },
+        "flags": {
+            "skip_final_train": bool(args.skip_final_train),
+            "skip_legacy_holdout": bool(args.skip_legacy_holdout),
+            "skip_walk_forward": bool(args.skip_walk_forward),
+        },
+    }
+
+
 def build_compat_report_sections(legacy_holdout, walk_forward):
     if legacy_holdout is not None:
         return legacy_holdout["model"], legacy_holdout["static_baselines"], legacy_holdout["online_baselines"]
@@ -740,6 +774,12 @@ def build_manifest(
     prediction_history_rows,
     generated_at,
     bundle_id,
+    feature_cols_path,
+    model_path,
+    scaler_path,
+    data_fingerprint,
+    training_context,
+    runtime_environment,
 ):
     primary_evaluation = select_primary_evaluation(legacy_holdout, walk_forward_report)
     model_summary = primary_evaluation["model_summary"]
@@ -774,22 +814,28 @@ def build_manifest(
         },
         "final_artifact_status": final_artifact_status,
     }
+    artifact_paths = {
+        "eval_report": eval_report_path,
+        "prediction_history": prediction_history_path,
+        "model": model_path,
+        "scaler": scaler_path,
+        "feature_cols": feature_cols_path,
+    }
 
     return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "bundle_id": bundle_id,
         "generated_at": generated_at,
         "loto_type": loto_type,
         "latest_draw_id": int(df.iloc[-1]["draw_id"]),
         "train_range": build_range_metadata(df, 0, len(df) - 1),
+        "data_fingerprint": data_fingerprint,
+        "training_context": training_context,
+        "runtime_environment": runtime_environment,
         "metrics_summary": metrics_summary,
-        "artifacts": {
-            "eval_report": eval_report_path,
-            "prediction_history": prediction_history_path,
-            "model": os.path.join(MODEL_DIR, f"{loto_type}_prob.keras"),
-            "scaler": os.path.join(MODEL_DIR, f"{loto_type}_scaler.pkl"),
-            "feature_cols": os.path.join(DATA_DIR, f"{loto_type}_feature_cols.json"),
-        },
+        "artifacts": artifact_paths,
+        "artifact_metadata": collect_file_metadata(artifact_paths),
         "prediction_history_path": prediction_history_path,
         "prediction_history_rows": int(prediction_history_rows),
         "git_commit": get_git_commit(),
@@ -799,6 +845,7 @@ def build_manifest(
 def save_json(path, payload):
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
 
 
 def apply_preset(args):
@@ -812,6 +859,7 @@ def apply_preset(args):
 def train_for_type(loto_type, args):
     config = LOTO_CONFIG[loto_type]
     df_path = os.path.join(DATA_DIR, f"{loto_type}_processed.csv")
+    raw_path = os.path.join(DATA_DIR, f"{loto_type}_raw.csv")
     if not os.path.exists(df_path):
         print(f"[{loto_type}] データなし。スキップします。")
         return False
@@ -821,6 +869,23 @@ def train_for_type(loto_type, args):
     raw_features = dataset["raw_features"]
     targets = dataset["targets"]
     feature_cols = dataset["feature_cols"]
+    latest_draw_id = int(df.iloc[-1]["draw_id"])
+    data_fingerprint = build_data_fingerprint(
+        processed_path=df_path,
+        raw_path=raw_path if os.path.exists(raw_path) else None,
+        row_count=len(df),
+        sample_count=len(targets),
+        latest_draw_id=latest_draw_id,
+        preprocessing_version=PREPROCESSING_VERSION,
+    )
+    training_context = build_training_context(
+        args=args,
+        loto_type=loto_type,
+        feature_cols=feature_cols,
+        pick_count=config["pick_count"],
+        max_num=config["max_num"],
+    )
+    runtime_environment = collect_runtime_environment()
 
     if len(targets) <= args.walk_forward_test_window:
         raise ValueError(f"[{loto_type}] データ量が不足しています。samples={len(targets)}")
@@ -879,14 +944,18 @@ def train_for_type(loto_type, args):
     )
 
     report = {
-        "schema_version": 2,
+        "schema_version": EVAL_REPORT_SCHEMA_VERSION,
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "bundle_id": bundle_id,
         "generated_at": generated_at,
         "loto_type": loto_type,
         "lookback_window": LOOKBACK_WINDOW,
+        "data_fingerprint": data_fingerprint,
+        "training_context": training_context,
+        "runtime_environment": runtime_environment,
         "run_options": {
             "preset": args.preset,
+            "seed": args.seed,
             "skip_final_train": args.skip_final_train,
             "skip_legacy_holdout": args.skip_legacy_holdout,
             "skip_walk_forward": args.skip_walk_forward,
@@ -914,6 +983,9 @@ def train_for_type(loto_type, args):
             bundle_id=bundle_id,
         ),
     )
+    feature_cols_path = os.path.join(DATA_DIR, f"{loto_type}_feature_cols.json")
+    model_path = os.path.join(MODEL_DIR, f"{loto_type}_prob.keras")
+    scaler_path = os.path.join(MODEL_DIR, f"{loto_type}_scaler.pkl")
 
     if args.skip_final_train:
         print("  [3/4] 本番用モデル学習をスキップし、既存成果物を再利用または雛形を保存します...")
@@ -943,6 +1015,12 @@ def train_for_type(loto_type, args):
         prediction_history_rows=len(prediction_history_records),
         generated_at=generated_at,
         bundle_id=bundle_id,
+        feature_cols_path=feature_cols_path,
+        model_path=model_path,
+        scaler_path=scaler_path,
+        data_fingerprint=data_fingerprint,
+        training_context=training_context,
+        runtime_environment=runtime_environment,
     )
     save_json(os.path.join(DATA_DIR, f"manifest_{loto_type}.json"), manifest)
 

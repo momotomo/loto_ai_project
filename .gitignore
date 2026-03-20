@@ -1,7 +1,9 @@
 venv/
 .DS_Store
 __pycache__/
+.pytest_cache/
 kaggle_temp/
+runs/
 data/eval_report_*.json
 data/manifest_*.json
 data/prediction_history_*.json

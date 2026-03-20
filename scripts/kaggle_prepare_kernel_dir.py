@@ -11,6 +11,7 @@ from pathlib import Path
 
 PAYLOAD_PLACEHOLDER = "__KAGGLE_PAYLOAD_BASE64__"
 ROOT_FILES = [
+    "artifact_utils.py",
     "config.py",
     "data_collector.py",
     "train_prob_model.py",
@@ -28,6 +29,7 @@ def parse_args():
     parser.add_argument("--kernel-title", help="Optional Kaggle kernel title")
     parser.add_argument("--targets", nargs="+", required=True)
     parser.add_argument("--train-preset", default="fast")
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--skip-legacy-holdout", action="store_true")
     return parser.parse_args()
 
@@ -61,6 +63,7 @@ def build_run_config(args):
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "targets": args.targets,
         "train_preset": args.train_preset,
+        "seed": args.seed,
         "skip_legacy_holdout": args.skip_legacy_holdout,
     }
 

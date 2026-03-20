@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.lock
+
+      - name: py_compile
+        shell: bash
+        run: python -m py_compile $(git ls-files '*.py')
+
+      - name: pytest
+        run: pytest -q
+
+      - name: Smoke update_system
+        run: python update_system.py --loto_type loto6 --train_preset smoke --skip_final_train --skip_data_refresh --seed 42
