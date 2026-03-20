@@ -100,6 +100,8 @@ def inspect_prediction_artifact_integrity(
     lookback_window,
     feature_strategy="tabular",
     prepared_feature_count=None,
+    scaler_feature_count=None,
+    input_summary=None,
 ):
     issues = []
 
@@ -128,13 +130,19 @@ def inspect_prediction_artifact_integrity(
             }
         )
 
-    scaler_feature_count = getattr(scaler, "n_features_in_", None) if scaler is not None else None
-    if scaler_feature_count is not None and scaler_feature_count != len(feature_cols):
+    observed_scaler_feature_count = getattr(scaler, "n_features_in_", None) if scaler is not None else None
+    expected_scaler_feature_count = (
+        int(scaler_feature_count)
+        if scaler_feature_count is not None
+        else len(feature_cols)
+    )
+    if observed_scaler_feature_count is not None and observed_scaler_feature_count != expected_scaler_feature_count:
         issues.append(
             {
                 "kind": "scaler_dimension_mismatch",
-                "message": "scaler の入力次元と feature_cols の長さが一致しません。",
-                "scaler_feature_count": int(scaler_feature_count),
+                "message": "scaler の入力次元と期待される特徴次元が一致しません。",
+                "scaler_feature_count": int(observed_scaler_feature_count),
+                "expected_scaler_feature_count": int(expected_scaler_feature_count),
                 "feature_col_count": len(feature_cols),
             }
         )
@@ -142,7 +150,6 @@ def inspect_prediction_artifact_integrity(
     model_input_shape = normalize_model_input_shape(model)
     if model_input_shape and len(model_input_shape) >= 3:
         model_lookback = model_input_shape[1]
-        model_feature_count = model_input_shape[2]
 
         if model_lookback is not None and int(model_lookback) != int(lookback_window):
             issues.append(
@@ -154,15 +161,48 @@ def inspect_prediction_artifact_integrity(
                 }
             )
 
-        if model_feature_count is not None and int(model_feature_count) != len(feature_cols):
-            issues.append(
-                {
-                    "kind": "model_feature_mismatch",
-                    "message": "モデル入力次元と feature_cols の長さが一致しません。",
-                    "model_feature_count": int(model_feature_count),
-                    "feature_col_count": len(feature_cols),
-                }
-            )
+        if len(model_input_shape) >= 4:
+            expected_set_cardinality = (input_summary or {}).get("set_cardinality")
+            expected_element_feature_count = (input_summary or {}).get("element_feature_count")
+            model_set_cardinality = model_input_shape[2]
+            model_element_feature_count = model_input_shape[3]
+            if (
+                expected_set_cardinality is not None
+                and model_set_cardinality is not None
+                and int(model_set_cardinality) != int(expected_set_cardinality)
+            ):
+                issues.append(
+                    {
+                        "kind": "model_set_cardinality_mismatch",
+                        "message": "モデルの集合要素数と期待される set cardinality が一致しません。",
+                        "model_set_cardinality": int(model_set_cardinality),
+                        "expected_set_cardinality": int(expected_set_cardinality),
+                    }
+                )
+            if (
+                expected_element_feature_count is not None
+                and model_element_feature_count is not None
+                and int(model_element_feature_count) != int(expected_element_feature_count)
+            ):
+                issues.append(
+                    {
+                        "kind": "model_element_feature_mismatch",
+                        "message": "モデルの element feature 次元と期待値が一致しません。",
+                        "model_element_feature_count": int(model_element_feature_count),
+                        "expected_element_feature_count": int(expected_element_feature_count),
+                    }
+                )
+        else:
+            model_feature_count = model_input_shape[2]
+            if model_feature_count is not None and int(model_feature_count) != len(feature_cols):
+                issues.append(
+                    {
+                        "kind": "model_feature_mismatch",
+                        "message": "モデル入力次元と feature_cols の長さが一致しません。",
+                        "model_feature_count": int(model_feature_count),
+                        "feature_col_count": len(feature_cols),
+                    }
+                )
 
     if len(df) < lookback_window:
         issues.append(

@@ -50,7 +50,7 @@
 - 復旧:
   - `python train_prob_model.py --loto_type loto6` を再実行する。
   - Kaggle 利用時は同期をやり直す。
-  - 評価だけ先に見たい場合は `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot --skip_final_train` を使い、運用モデル更新は後で本実行する。
+  - 評価だけ先に見たい場合は `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets --skip_final_train` を使い、運用モデル更新は後で本実行する。
 
 ## prediction history が無い
 - 症状: Streamlit の「✅ 実績との照合」で `prediction history が未生成です` と表示される。
@@ -76,9 +76,9 @@
 ## CPU が重くて回らない
 - 症状: ローカル無料 CPU で full 学習が長い。
 - 対処:
-  - `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot`
+  - `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets`
   - `venv/bin/python train_prob_model.py --loto_type loto6 --preset fast`
-  - `venv/bin/python update_system.py --loto_type loto6 --train_preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot --skip_data_refresh`
+  - `venv/bin/python update_system.py --loto_type loto6 --train_preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets --skip_data_refresh`
 - メモ:
   - `legacy_holdout` / `walk_forward` は leak-free 評価。
   - final model は運用用の全データ fit。
@@ -96,7 +96,7 @@
 ## 実験の再現 run を残したい
 - 症状: どの config / source / artifact で実験したかを run 単位で残したい。
 - 対処:
-  - `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"multihot","evaluation_model_variants":"legacy,multihot","refresh_data":false,"skip_final_train":true}'`
+  - `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"deepsets","evaluation_model_variants":"legacy,multihot,deepsets","refresh_data":false,"skip_final_train":true}'`
 - 生成物:
   - `runs/<run_id>/config/*.json`
   - `runs/<run_id>/source_hashes.json`

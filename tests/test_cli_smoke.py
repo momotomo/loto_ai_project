@@ -78,7 +78,7 @@ def test_train_prob_model_multihot_smoke_writes_variant_stats_and_calibration_ar
         "--model_variant",
         "multihot",
         "--evaluation_model_variants",
-        "legacy,multihot",
+        "legacy,multihot,deepsets",
         "--saved_calibration_method",
         "temperature",
         "--evaluation_calibration_methods",
@@ -99,6 +99,7 @@ def test_train_prob_model_multihot_smoke_writes_variant_stats_and_calibration_ar
     assert manifest["metrics_summary"]["post_calibration_logloss"] is not None
     assert "legacy" in report["model_variants"]
     assert "multihot" in report["model_variants"]
+    assert "deepsets" in report["model_variants"]
     assert "comparisons" in report["statistical_tests"]
     assert "rule" in report["decision_summary"]
     assert "variant: multihot" in predict_result.stdout
@@ -118,7 +119,7 @@ def test_update_system_and_predict_smoke_support_variant_aware_artifacts(tmp_pat
         "--model_variant",
         "legacy",
         "--evaluation_model_variants",
-        "legacy,multihot",
+        "legacy,multihot,deepsets",
         "--skip_final_train",
         "--skip_data_refresh",
         "--seed",
@@ -130,6 +131,39 @@ def test_update_system_and_predict_smoke_support_variant_aware_artifacts(tmp_pat
     assert manifest["training_context"]["model_variant"] == "legacy"
     assert "variant: legacy" in predict_result.stdout
     assert "calibration: No Calibration (none)" in predict_result.stdout
+
+
+def test_train_prob_model_deepsets_smoke_supports_variant_aware_prediction(tmp_path):
+    workspace = prepare_workspace(tmp_path)
+    run_command(
+        workspace,
+        "train_prob_model.py",
+        "--loto_type",
+        "loto6",
+        "--preset",
+        "smoke",
+        "--model_variant",
+        "deepsets",
+        "--evaluation_model_variants",
+        "legacy,multihot,deepsets",
+        "--saved_calibration_method",
+        "none",
+        "--evaluation_calibration_methods",
+        "none,temperature",
+        "--seed",
+        "124",
+    )
+    predict_result = run_command(workspace, "predict.py", "--loto_type", "loto6")
+
+    manifest = json.loads((workspace / "data" / "manifest_loto6.json").read_text(encoding="utf-8"))
+    report = json.loads((workspace / "data" / "eval_report_loto6.json").read_text(encoding="utf-8"))
+
+    assert manifest["training_context"]["model_variant"] == "deepsets"
+    assert manifest["training_context"]["feature_strategy"] == "set_sequence_deepsets"
+    assert manifest["training_context"]["input_summary"]["set_cardinality"] == 6
+    assert report["model_variants"]["deepsets"]["model_family"] == "deepsets_sequence"
+    assert "deepsets_vs_best_static" in report["statistical_tests"]["comparisons"]
+    assert "variant: deepsets" in predict_result.stdout
 
 
 def test_predict_smoke_falls_back_when_calibrator_artifact_is_missing(tmp_path):

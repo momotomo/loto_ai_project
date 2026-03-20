@@ -10,8 +10,8 @@ import pandas as pd
 import tensorflow as tf
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.layers import BatchNormalization, Dense, Dropout, Input, LSTM
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import AveragePooling2D, BatchNormalization, Dense, Dropout, Input, LSTM, Reshape
+from tensorflow.keras.models import Model, Sequential
 
 from artifact_utils import build_data_fingerprint, collect_file_metadata, collect_runtime_environment
 from calibration_utils import (
@@ -41,14 +41,19 @@ from config import (
 )
 from evaluation_statistics import build_logloss_comparison_summary
 from model_variants import (
+    DEEPSETS_MODEL_VARIANT,
     DEFAULT_MODEL_VARIANT,
     LEGACY_MODEL_VARIANT,
     MODEL_VARIANT_CHOICES,
     MULTIHOT_MODEL_VARIANT,
+    build_model_samples_from_scaled_rows,
     create_multi_hot as build_target_multi_hot,
+    fit_scaler_for_variant,
+    get_scaler_feature_count,
     get_model_variant_label,
     prepare_model_dataset,
     resolve_model_variant,
+    transform_features_for_variant,
 )
 
 # フリーズ回避
@@ -456,7 +461,31 @@ def summarize_metric_series(values):
     }
 
 
-def build_prob_model(input_shape, max_num, compile_model=True):
+def build_deepsets_prob_model(input_shape, max_num, compile_model=True):
+    lookback_window, set_cardinality, _ = input_shape
+    inputs = Input(shape=input_shape, name="deepsets_input")
+    x = Dense(32, activation="relu", name="element_encoder_dense_1")(inputs)
+    x = Dense(16, activation="relu", name="element_encoder_dense_2")(x)
+    x = AveragePooling2D(pool_size=(1, set_cardinality), strides=(1, set_cardinality), name="set_pooling_mean")(x)
+    x = Reshape((lookback_window, 16), name="pooled_draw_embeddings")(x)
+    x = LSTM(48, return_sequences=True, name="sequence_lstm_1")(x)
+    x = BatchNormalization(name="sequence_batchnorm_1")(x)
+    x = Dropout(0.2, name="sequence_dropout_1")(x)
+    x = LSTM(24, name="sequence_lstm_2")(x)
+    x = BatchNormalization(name="sequence_batchnorm_2")(x)
+    x = Dropout(0.2, name="sequence_dropout_2")(x)
+    x = Dense(32, activation="relu", name="prediction_head_dense")(x)
+    outputs = Dense(max_num, activation="sigmoid", name="number_probabilities")(x)
+    model = Model(inputs=inputs, outputs=outputs, name="deepsets_sequence_model")
+    if compile_model:
+        model.compile(optimizer="adam", loss="binary_crossentropy")
+    return model
+
+
+def build_prob_model(input_shape, max_num, model_variant=DEFAULT_MODEL_VARIANT, dataset_metadata=None, compile_model=True):
+    if resolve_model_variant(model_variant) == DEEPSETS_MODEL_VARIANT:
+        return build_deepsets_prob_model(input_shape, max_num, compile_model=compile_model)
+
     model = Sequential(
         [
             Input(shape=input_shape),
@@ -475,9 +504,14 @@ def build_prob_model(input_shape, max_num, compile_model=True):
     return model
 
 
-def fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience):
-    tf.keras.backend.clear_session()
-    model = build_prob_model((X_train.shape[1], X_train.shape[2]), max_num, compile_model=epochs > 0)
+def fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience, model_variant, dataset_metadata):
+    model = build_prob_model(
+        X_train.shape[1:],
+        max_num,
+        model_variant=model_variant,
+        dataset_metadata=dataset_metadata,
+        compile_model=epochs > 0,
+    )
     if epochs <= 0:
         return model
 
@@ -642,15 +676,15 @@ def prepare_dataset(df, loto_type, model_variant):
     return prepare_model_dataset(df, loto_type, model_variant)
 
 
-def fit_scaler_for_split(raw_features, train_sample_count):
+def fit_scaler_for_split(raw_features, train_sample_count, dataset_metadata=None):
     observed_rows = min(len(raw_features), LOOKBACK_WINDOW + train_sample_count)
     scaler = MinMaxScaler()
-    scaler.fit(raw_features[:observed_rows])
+    scaler.fit(fit_scaler_for_variant(raw_features[:observed_rows], dataset_metadata))
     return scaler
 
 
-def build_samples_from_scaled_features(scaled_features, targets, sample_start, sample_end):
-    X = [scaled_features[index : index + LOOKBACK_WINDOW] for index in range(sample_start, sample_end)]
+def build_samples_from_scaled_features(scaled_features, targets, sample_start, sample_end, dataset_metadata=None):
+    X = build_model_samples_from_scaled_rows(scaled_features, sample_start, sample_end, dataset_metadata)
     y = targets[sample_start:sample_end]
     return np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32)
 
@@ -659,6 +693,7 @@ def evaluate_split(
     df,
     raw_features,
     targets,
+    dataset_metadata,
     loto_type,
     model_variant,
     pick_count,
@@ -685,20 +720,33 @@ def evaluate_split(
     )
     model_train_end = train_end - calibration_sample_count if calibration_sample_count > 0 else train_end
 
-    scaler = fit_scaler_for_split(raw_features, train_end)
+    scaler = fit_scaler_for_split(raw_features, train_end, dataset_metadata)
     required_rows = LOOKBACK_WINDOW + test_end
-    scaled_features = scaler.transform(raw_features[:required_rows])
+    scaled_features = transform_features_for_variant(raw_features[:required_rows], scaler, dataset_metadata)
 
-    X_train, y_train = build_samples_from_scaled_features(scaled_features, targets, 0, model_train_end)
+    X_train, y_train = build_samples_from_scaled_features(
+        scaled_features,
+        targets,
+        0,
+        model_train_end,
+        dataset_metadata,
+    )
     X_calibration, y_calibration = build_samples_from_scaled_features(
         scaled_features,
         targets,
         model_train_end,
         train_end,
+        dataset_metadata,
     )
-    X_test, y_test = build_samples_from_scaled_features(scaled_features, targets, train_end, test_end)
+    X_test, y_test = build_samples_from_scaled_features(
+        scaled_features,
+        targets,
+        train_end,
+        test_end,
+        dataset_metadata,
+    )
 
-    model = fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience)
+    model = fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience, model_variant, dataset_metadata)
     preds_test = sanitize_probabilities(model(tf.convert_to_tensor(X_test), training=False).numpy())
     preds_calibration = (
         sanitize_probabilities(model(tf.convert_to_tensor(X_calibration), training=False).numpy())
@@ -763,6 +811,7 @@ def evaluate_walk_forward(
     df,
     raw_features,
     targets,
+    dataset_metadata,
     loto_type,
     model_variant,
     pick_count,
@@ -822,6 +871,7 @@ def evaluate_walk_forward(
             df=df,
             raw_features=raw_features,
             targets=targets,
+            dataset_metadata=dataset_metadata,
             loto_type=loto_type,
             model_variant=model_variant,
             pick_count=pick_count,
@@ -860,7 +910,6 @@ def evaluate_walk_forward(
                 targets_by_name[key].append(y_test)
 
         del model
-        tf.keras.backend.clear_session()
 
     aggregate = {
         "model": aggregate_named_reports(
@@ -968,6 +1017,8 @@ def evaluate_walk_forward(
 def train_final_model(
     raw_features,
     targets,
+    dataset_metadata,
+    model_variant,
     max_num,
     epochs,
     batch_size,
@@ -978,8 +1029,8 @@ def train_final_model(
     calibration_max_samples,
 ):
     scaler = MinMaxScaler()
-    scaler.fit(raw_features)
-    scaled_features = scaler.transform(raw_features)
+    scaler.fit(fit_scaler_for_variant(raw_features, dataset_metadata))
+    scaled_features = transform_features_for_variant(raw_features, scaler, dataset_metadata)
     calibration_sample_count = resolve_calibration_sample_count(
         train_sample_count=len(targets),
         evaluation_calibration_methods=[saved_calibration_method],
@@ -988,14 +1039,21 @@ def train_final_model(
         calibration_max_samples=calibration_max_samples,
     )
     model_train_end = len(targets) - calibration_sample_count if calibration_sample_count > 0 else len(targets)
-    X_train, y_train = build_samples_from_scaled_features(scaled_features, targets, 0, model_train_end)
+    X_train, y_train = build_samples_from_scaled_features(
+        scaled_features,
+        targets,
+        0,
+        model_train_end,
+        dataset_metadata,
+    )
     X_calibration, y_calibration = build_samples_from_scaled_features(
         scaled_features,
         targets,
         model_train_end,
         len(targets),
+        dataset_metadata,
     )
-    model = fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience)
+    model = fit_prob_model(X_train, y_train, max_num, epochs, batch_size, patience, model_variant, dataset_metadata)
     calibration_preds = (
         sanitize_probabilities(model(tf.convert_to_tensor(X_calibration), training=False).numpy())
         if len(X_calibration)
@@ -1041,7 +1099,7 @@ def save_calibrator_artifact(loto_type, calibrator_artifact):
         save_json(path, calibrator_artifact)
 
 
-def existing_prediction_artifacts_match_feature_layout(model_path, scaler_path, feature_cols):
+def existing_prediction_artifacts_match_feature_layout(model_path, scaler_path, feature_cols, dataset_metadata):
     if not (os.path.exists(model_path) and os.path.exists(scaler_path)):
         return False
 
@@ -1049,7 +1107,8 @@ def existing_prediction_artifacts_match_feature_layout(model_path, scaler_path, 
         with open(scaler_path, "rb") as handle:
             scaler = pickle.load(handle)
         scaler_feature_count = getattr(scaler, "n_features_in_", None)
-        if scaler_feature_count is not None and int(scaler_feature_count) != len(feature_cols):
+        expected_scaler_feature_count = get_scaler_feature_count(dataset_metadata, feature_cols)
+        if scaler_feature_count is not None and int(scaler_feature_count) != expected_scaler_feature_count:
             return False
     except Exception:
         return False
@@ -1063,11 +1122,22 @@ def existing_prediction_artifacts_match_feature_layout(model_path, scaler_path, 
         if not isinstance(input_shape, tuple) or len(input_shape) < 3:
             return False
         lookback_size = input_shape[1]
-        feature_count = input_shape[2]
         if lookback_size is not None and int(lookback_size) != int(LOOKBACK_WINDOW):
             return False
-        if feature_count is not None and int(feature_count) != len(feature_cols):
-            return False
+        row_shape = (dataset_metadata or {}).get("row_shape")
+        if row_shape:
+            if len(input_shape) < 4:
+                return False
+            set_cardinality = input_shape[2]
+            element_feature_count = input_shape[3]
+            if set_cardinality is not None and int(set_cardinality) != int(row_shape[0]):
+                return False
+            if element_feature_count is not None and int(element_feature_count) != int(row_shape[1]):
+                return False
+        else:
+            feature_count = input_shape[2]
+            if feature_count is not None and int(feature_count) != len(feature_cols):
+                return False
         return True
     except Exception:
         return False
@@ -1082,6 +1152,8 @@ def persist_final_artifacts(
     raw_features,
     targets,
     feature_cols,
+    dataset_metadata,
+    model_variant,
     max_num,
     epochs,
     batch_size,
@@ -1096,7 +1168,12 @@ def persist_final_artifacts(
     scaler_path = os.path.join(MODEL_DIR, f"{loto_type}_scaler.pkl")
     existing_feature_cols = load_existing_feature_cols(loto_type)
     feature_cols_match = existing_feature_cols == feature_cols if existing_feature_cols is not None else False
-    artifacts_exist = existing_prediction_artifacts_match_feature_layout(model_path, scaler_path, feature_cols)
+    artifacts_exist = existing_prediction_artifacts_match_feature_layout(
+        model_path,
+        scaler_path,
+        feature_cols,
+        dataset_metadata,
+    )
     existing_calibrator_artifact, existing_calibrator_path = load_calibrator_artifact(
         loto_type,
         data_dir=DATA_DIR,
@@ -1137,6 +1214,8 @@ def persist_final_artifacts(
     final_scaler, final_model, calibrator_artifact, calibration_fit_summary = train_final_model(
         raw_features=raw_features,
         targets=targets,
+        dataset_metadata=dataset_metadata,
+        model_variant=model_variant,
         max_num=max_num,
         epochs=effective_epochs,
         batch_size=batch_size,
@@ -1189,10 +1268,18 @@ def build_training_context(args, loto_type, feature_cols, pick_count, max_num, d
         "evaluation_calibration_methods": list(args.evaluation_calibration_methods),
         "feature_strategy": dataset_metadata.get("feature_strategy"),
         "feature_channels": dataset_metadata.get("feature_channels"),
+        "model_family": (
+            "deepsets_sequence" if args.model_variant == DEEPSETS_MODEL_VARIANT else "temporal_lstm"
+        ),
         "lookback_window": int(LOOKBACK_WINDOW),
         "pick_count": int(pick_count),
         "max_num": int(max_num),
         "feature_column_count": int(len(feature_cols)),
+        "input_summary": dataset_metadata.get("input_summary"),
+        "set_cardinality": dataset_metadata.get("set_cardinality"),
+        "element_feature_count": dataset_metadata.get("element_feature_count"),
+        "pooling": dataset_metadata.get("pooling"),
+        "lookback_integration": dataset_metadata.get("lookback_integration"),
         "hyperparameters": {
             "initial_train_fraction": args.initial_train_fraction,
             "walk_forward_test_window": args.walk_forward_test_window,
@@ -1216,6 +1303,7 @@ def build_training_context(args, loto_type, feature_cols, pick_count, max_num, d
 
 
 def build_model_variant_payload(variant_name, dataset, legacy_holdout, walk_forward, final_artifact_status=None):
+    input_summary = dataset["dataset_metadata"].get("input_summary") or {}
     return {
         "variant": variant_name,
         "label": get_model_variant_label(variant_name),
@@ -1223,6 +1311,10 @@ def build_model_variant_payload(variant_name, dataset, legacy_holdout, walk_forw
         "feature_strategy": dataset["dataset_metadata"].get("feature_strategy"),
         "feature_channels": dataset["dataset_metadata"].get("feature_channels"),
         "feature_column_count": len(dataset["feature_cols"]),
+        "model_family": "deepsets_sequence" if variant_name == DEEPSETS_MODEL_VARIANT else "temporal_lstm",
+        "input_summary": input_summary,
+        "set_pooling": input_summary.get("pooling"),
+        "lookback_integration": dataset["dataset_metadata"].get("lookback_integration"),
         "legacy_holdout": legacy_holdout,
         "walk_forward": walk_forward,
         "final_artifact_status": final_artifact_status,
@@ -1469,6 +1561,33 @@ def select_comparison_prediction_stream(variant_name, comparison_payloads, calib
     return payload["model_preds"], NO_CALIBRATION_METHOD
 
 
+def build_variant_comparison_summary(
+    candidate_variant,
+    reference_name,
+    candidate_losses,
+    reference_losses,
+    candidate_calibration_method,
+    reference_calibration_method,
+    alpha,
+    bootstrap_samples,
+    permutation_samples,
+    seed,
+):
+    comparison = build_logloss_comparison_summary(
+        candidate_losses,
+        reference_losses,
+        candidate_name=candidate_variant,
+        reference_name=reference_name,
+        confidence=1.0 - alpha,
+        n_bootstrap=bootstrap_samples,
+        n_permutations=permutation_samples,
+        seed=seed,
+    )
+    comparison["candidate_calibration_method"] = candidate_calibration_method
+    comparison["reference_calibration_method"] = reference_calibration_method
+    return comparison
+
+
 def build_statistical_tests(
     model_variant_reports,
     comparison_payloads,
@@ -1494,75 +1613,64 @@ def build_statistical_tests(
     )
     comparisons = {}
     selected_calibration_methods = {}
+    per_variant_predictions = {}
 
-    if LEGACY_MODEL_VARIANT in comparison_payloads:
-        legacy_preds, legacy_method = select_comparison_prediction_stream(
-            LEGACY_MODEL_VARIANT,
+    for variant_name in comparison_payloads:
+        variant_preds, variant_method = select_comparison_prediction_stream(
+            variant_name,
             comparison_payloads,
             calibration_selections,
         )
-        selected_calibration_methods[LEGACY_MODEL_VARIANT] = legacy_method
-        legacy_vs_best_static = build_logloss_comparison_summary(
-            calculate_per_draw_logloss(legacy_preds, reference_targets),
-            best_static_losses,
-            candidate_name=LEGACY_MODEL_VARIANT,
+        selected_calibration_methods[variant_name] = variant_method
+        per_variant_predictions[variant_name] = {
+            "preds": variant_preds,
+            "losses": calculate_per_draw_logloss(variant_preds, reference_targets),
+            "calibration_method": variant_method,
+        }
+        comparisons[f"{variant_name}_vs_best_static"] = build_variant_comparison_summary(
+            candidate_variant=variant_name,
             reference_name=f"static_baseline:{best_static_name}",
-            confidence=1.0 - alpha,
-            n_bootstrap=bootstrap_samples,
-            n_permutations=permutation_samples,
+            candidate_losses=per_variant_predictions[variant_name]["losses"],
+            reference_losses=best_static_losses,
+            candidate_calibration_method=variant_method,
+            reference_calibration_method=NO_CALIBRATION_METHOD,
+            alpha=alpha,
+            bootstrap_samples=bootstrap_samples,
+            permutation_samples=permutation_samples,
             seed=seed,
         )
-        legacy_vs_best_static["candidate_calibration_method"] = legacy_method
-        legacy_vs_best_static["reference_calibration_method"] = NO_CALIBRATION_METHOD
-        comparisons["legacy_vs_best_static"] = legacy_vs_best_static
 
-    if MULTIHOT_MODEL_VARIANT in comparison_payloads:
-        multihot_preds, multihot_method = select_comparison_prediction_stream(
-            MULTIHOT_MODEL_VARIANT,
-            comparison_payloads,
-            calibration_selections,
-        )
-        selected_calibration_methods[MULTIHOT_MODEL_VARIANT] = multihot_method
-        multihot_vs_best_static = build_logloss_comparison_summary(
-            calculate_per_draw_logloss(multihot_preds, reference_targets),
-            best_static_losses,
-            candidate_name=MULTIHOT_MODEL_VARIANT,
-            reference_name=f"static_baseline:{best_static_name}",
-            confidence=1.0 - alpha,
-            n_bootstrap=bootstrap_samples,
-            n_permutations=permutation_samples,
-            seed=seed,
-        )
-        multihot_vs_best_static["candidate_calibration_method"] = multihot_method
-        multihot_vs_best_static["reference_calibration_method"] = NO_CALIBRATION_METHOD
-        comparisons["multihot_vs_best_static"] = multihot_vs_best_static
+    if LEGACY_MODEL_VARIANT in per_variant_predictions:
+        legacy_losses = per_variant_predictions[LEGACY_MODEL_VARIANT]["losses"]
+        legacy_method = per_variant_predictions[LEGACY_MODEL_VARIANT]["calibration_method"]
+        for challenger_variant in [variant for variant in comparison_payloads if variant != LEGACY_MODEL_VARIANT]:
+            challenger_payload = per_variant_predictions[challenger_variant]
+            comparisons[f"{challenger_variant}_vs_legacy"] = build_variant_comparison_summary(
+                candidate_variant=challenger_variant,
+                reference_name=LEGACY_MODEL_VARIANT,
+                candidate_losses=challenger_payload["losses"],
+                reference_losses=legacy_losses,
+                candidate_calibration_method=challenger_payload["calibration_method"],
+                reference_calibration_method=legacy_method,
+                alpha=alpha,
+                bootstrap_samples=bootstrap_samples,
+                permutation_samples=permutation_samples,
+                seed=seed,
+            )
 
-    if LEGACY_MODEL_VARIANT in comparison_payloads and MULTIHOT_MODEL_VARIANT in comparison_payloads:
-        legacy_preds, legacy_method = select_comparison_prediction_stream(
-            LEGACY_MODEL_VARIANT,
-            comparison_payloads,
-            calibration_selections,
-        )
-        multihot_preds, multihot_method = select_comparison_prediction_stream(
-            MULTIHOT_MODEL_VARIANT,
-            comparison_payloads,
-            calibration_selections,
-        )
-        selected_calibration_methods[LEGACY_MODEL_VARIANT] = legacy_method
-        selected_calibration_methods[MULTIHOT_MODEL_VARIANT] = multihot_method
-        multihot_vs_legacy = build_logloss_comparison_summary(
-            calculate_per_draw_logloss(multihot_preds, reference_targets),
-            calculate_per_draw_logloss(legacy_preds, reference_targets),
-            candidate_name=MULTIHOT_MODEL_VARIANT,
-            reference_name=LEGACY_MODEL_VARIANT,
-            confidence=1.0 - alpha,
-            n_bootstrap=bootstrap_samples,
-            n_permutations=permutation_samples,
+    if DEEPSETS_MODEL_VARIANT in per_variant_predictions and MULTIHOT_MODEL_VARIANT in per_variant_predictions:
+        comparisons["deepsets_vs_multihot"] = build_variant_comparison_summary(
+            candidate_variant=DEEPSETS_MODEL_VARIANT,
+            reference_name=MULTIHOT_MODEL_VARIANT,
+            candidate_losses=per_variant_predictions[DEEPSETS_MODEL_VARIANT]["losses"],
+            reference_losses=per_variant_predictions[MULTIHOT_MODEL_VARIANT]["losses"],
+            candidate_calibration_method=per_variant_predictions[DEEPSETS_MODEL_VARIANT]["calibration_method"],
+            reference_calibration_method=per_variant_predictions[MULTIHOT_MODEL_VARIANT]["calibration_method"],
+            alpha=alpha,
+            bootstrap_samples=bootstrap_samples,
+            permutation_samples=permutation_samples,
             seed=seed,
         )
-        multihot_vs_legacy["candidate_calibration_method"] = multihot_method
-        multihot_vs_legacy["reference_calibration_method"] = legacy_method
-        comparisons["multihot_vs_legacy"] = multihot_vs_legacy
 
     return {
         "metric": "per_draw_logloss",
@@ -1573,6 +1681,17 @@ def build_statistical_tests(
         "alpha": alpha,
         "comparisons": comparisons,
     }
+
+
+def evaluate_statistical_guardrail(comparison_payload, alpha):
+    if comparison_payload is None:
+        return False, False
+    ci = comparison_payload.get("bootstrap_ci") or {}
+    p_value = ((comparison_payload.get("permutation_test") or {}).get("p_value"))
+    return (
+        ci.get("upper") is not None and ci["upper"] < 0.0,
+        p_value is not None and p_value < alpha,
+    )
 
 
 def build_adoption_decision(
@@ -1586,93 +1705,156 @@ def build_adoption_decision(
 ):
     rankings = rank_model_variants_by_logloss(model_variant_reports)
     recommended_variant = production_variant
-    candidate_selection = calibration_selections.get(MULTIHOT_MODEL_VARIANT) or {}
-    candidate_selected_metrics = candidate_selection.get("recommended_metrics") or {}
-    candidate_raw_metrics = candidate_selection.get("raw_metrics") or {}
-    candidate_selected_method = candidate_selection.get("recommended_method", NO_CALIBRATION_METHOD)
     recommended_calibration_method = (
         (calibration_selections.get(production_variant) or {}).get("recommended_method", production_calibration_method)
     )
-    decision_flags = {
-        "beats_best_static_with_ci": False,
-        "beats_best_static_with_p_value": False,
-        "beats_legacy_with_ci": False,
-        "beats_legacy_with_p_value": False,
-        "calibration_logloss_non_worse": False,
-        "calibration_brier_non_worse": False,
-        "calibration_ece_guardrail": False,
-    }
     reason_codes = []
     reason_summary = []
-
     comparisons = (statistical_tests or {}).get("comparisons") or {}
-    multihot_vs_best_static = comparisons.get("multihot_vs_best_static")
-    multihot_vs_legacy = comparisons.get("multihot_vs_legacy")
+    challenger_decisions = {}
+    promotion_candidates = []
 
-    if multihot_vs_best_static is None:
-        reason_codes.append("multihot_vs_best_static_missing")
-    else:
-        ci = multihot_vs_best_static.get("bootstrap_ci") or {}
-        p_value = ((multihot_vs_best_static.get("permutation_test") or {}).get("p_value"))
-        decision_flags["beats_best_static_with_ci"] = ci.get("upper") is not None and ci["upper"] < 0.0
-        decision_flags["beats_best_static_with_p_value"] = p_value is not None and p_value < alpha
+    for variant_name, selection in calibration_selections.items():
+        if variant_name == production_variant:
+            continue
 
-    if multihot_vs_legacy is None:
-        reason_codes.append("multihot_vs_legacy_missing")
-    else:
-        ci = multihot_vs_legacy.get("bootstrap_ci") or {}
-        p_value = ((multihot_vs_legacy.get("permutation_test") or {}).get("p_value"))
-        decision_flags["beats_legacy_with_ci"] = ci.get("upper") is not None and ci["upper"] < 0.0
-        decision_flags["beats_legacy_with_p_value"] = p_value is not None and p_value < alpha
-
-    if candidate_selected_metrics:
-        decision_flags["calibration_logloss_non_worse"] = (
-            candidate_selected_metrics.get("logloss") is not None
-            and candidate_raw_metrics.get("logloss") is not None
-            and candidate_selected_metrics["logloss"] <= candidate_raw_metrics["logloss"] + EPSILON
+        selected_metrics = selection.get("recommended_metrics") or {}
+        raw_metrics = selection.get("raw_metrics") or {}
+        selected_method = selection.get("recommended_method", NO_CALIBRATION_METHOD)
+        best_static_key = f"{variant_name}_vs_best_static"
+        legacy_key = f"{variant_name}_vs_legacy"
+        multihot_key = f"{variant_name}_vs_multihot"
+        beats_best_static_with_ci, beats_best_static_with_p_value = evaluate_statistical_guardrail(
+            comparisons.get(best_static_key),
+            alpha,
         )
-        decision_flags["calibration_brier_non_worse"] = (
-            candidate_selected_metrics.get("brier") is not None
-            and candidate_raw_metrics.get("brier") is not None
-            and candidate_selected_metrics["brier"] <= candidate_raw_metrics["brier"] + EPSILON
+        beats_legacy_with_ci = None
+        beats_legacy_with_p_value = None
+        if variant_name != LEGACY_MODEL_VARIANT and LEGACY_MODEL_VARIANT in calibration_selections:
+            beats_legacy_with_ci, beats_legacy_with_p_value = evaluate_statistical_guardrail(
+                comparisons.get(legacy_key),
+                alpha,
+            )
+        beats_multihot_with_ci = None
+        beats_multihot_with_p_value = None
+        if variant_name == DEEPSETS_MODEL_VARIANT and MULTIHOT_MODEL_VARIANT in calibration_selections:
+            beats_multihot_with_ci, beats_multihot_with_p_value = evaluate_statistical_guardrail(
+                comparisons.get(multihot_key) or comparisons.get("deepsets_vs_multihot"),
+                alpha,
+            )
+
+        calibration_logloss_non_worse = (
+            selected_metrics.get("logloss") is not None
+            and raw_metrics.get("logloss") is not None
+            and selected_metrics["logloss"] <= raw_metrics["logloss"] + EPSILON
         )
-        decision_flags["calibration_ece_guardrail"] = bool(
-            candidate_selected_metrics.get("ece") is not None
+        calibration_brier_non_worse = (
+            selected_metrics.get("brier") is not None
+            and raw_metrics.get("brier") is not None
+            and selected_metrics["brier"] <= raw_metrics["brier"] + EPSILON
+        )
+        calibration_ece_guardrail = bool(
+            selected_metrics.get("ece") is not None
             and (
                 (
-                    candidate_raw_metrics.get("ece") is not None
-                    and candidate_selected_metrics["ece"] <= candidate_raw_metrics["ece"] + EPSILON
+                    raw_metrics.get("ece") is not None
+                    and selected_metrics["ece"] <= raw_metrics["ece"] + EPSILON
                 )
-                or candidate_selected_metrics["ece"] <= ece_threshold + EPSILON
+                or selected_metrics["ece"] <= ece_threshold + EPSILON
             )
         )
-    else:
-        reason_codes.append("candidate_calibration_metrics_missing")
+        required_flags = {
+            "beats_best_static_with_ci": beats_best_static_with_ci,
+            "beats_best_static_with_p_value": beats_best_static_with_p_value,
+            "calibration_logloss_non_worse": calibration_logloss_non_worse,
+            "calibration_brier_non_worse": calibration_brier_non_worse,
+            "calibration_ece_guardrail": calibration_ece_guardrail,
+        }
+        if variant_name != LEGACY_MODEL_VARIANT and LEGACY_MODEL_VARIANT in calibration_selections:
+            required_flags["beats_legacy_with_ci"] = beats_legacy_with_ci
+            required_flags["beats_legacy_with_p_value"] = beats_legacy_with_p_value
 
-    should_promote_multihot = all(value is True for value in decision_flags.values())
-    if should_promote_multihot:
-        recommended_variant = MULTIHOT_MODEL_VARIANT
-        recommended_calibration_method = candidate_selected_method
-        reason_codes.append("promote_multihot")
+        should_promote = all(value is True for value in required_flags.values())
+        local_reason_summary = []
+        if should_promote:
+            local_reason_summary.append(
+                f"{variant_name} は best static / legacy の統計 guardrail と calibration guardrail をすべて満たしました。"
+            )
+        else:
+            if not beats_best_static_with_ci or not beats_best_static_with_p_value:
+                local_reason_summary.append("best static baseline に対する統計的優位が十分ではありません。")
+            if variant_name != LEGACY_MODEL_VARIANT and LEGACY_MODEL_VARIANT in calibration_selections:
+                if not beats_legacy_with_ci or not beats_legacy_with_p_value:
+                    local_reason_summary.append("legacy に対する統計的優位が十分ではありません。")
+            if not calibration_logloss_non_worse:
+                local_reason_summary.append("選択 calibration 後の logloss が raw を維持できていません。")
+            if not calibration_brier_non_worse:
+                local_reason_summary.append("選択 calibration 後の Brier が raw より悪化しています。")
+            if not calibration_ece_guardrail:
+                local_reason_summary.append("選択 calibration 後の ECE が許容範囲を満たしていません。")
+
+        challenger_decisions[variant_name] = {
+            "variant": variant_name,
+            "label": get_model_variant_label(variant_name),
+            "selected_calibration_method": selected_method,
+            "selected_metrics": selected_metrics,
+            "raw_metrics": raw_metrics,
+            "required_comparisons": {
+                "best_static": best_static_key,
+                "legacy": legacy_key if variant_name != LEGACY_MODEL_VARIANT and LEGACY_MODEL_VARIANT in calibration_selections else None,
+            },
+            "optional_comparisons": {
+                "multihot": "deepsets_vs_multihot" if variant_name == DEEPSETS_MODEL_VARIANT else None,
+            },
+            "flags": {
+                **required_flags,
+                "beats_multihot_with_ci": beats_multihot_with_ci,
+                "beats_multihot_with_p_value": beats_multihot_with_p_value,
+            },
+            "should_promote": should_promote,
+            "reason_summary": local_reason_summary,
+        }
+        if should_promote:
+            promotion_candidates.append(challenger_decisions[variant_name])
+
+    if promotion_candidates:
+        promotion_candidates = sorted(
+            promotion_candidates,
+            key=lambda item: float("inf") if (item.get("selected_metrics") or {}).get("logloss") is None else float(item["selected_metrics"]["logloss"]),
+        )
+        best_candidate = promotion_candidates[0]
+        recommended_variant = best_candidate["variant"]
+        recommended_calibration_method = best_candidate["selected_calibration_method"]
+        reason_codes.append(f"promote_variant:{recommended_variant}")
         reason_summary.append(
-            "multihot が best static / legacy に対する統計条件を満たし、選択された calibration も logloss・Brier・ECE guardrail を満たしました。"
+            f"{get_model_variant_label(recommended_variant)} が比較候補の中で最も低い logloss で guardrail を満たしたため、promotion 候補として推奨します。"
         )
     else:
         reason_codes.append(f"retain_production_variant:{production_variant}")
-        if not decision_flags["beats_best_static_with_ci"] or not decision_flags["beats_best_static_with_p_value"]:
-            reason_summary.append("best static baseline に対する統計的優位が十分ではありません。")
-        if not decision_flags["beats_legacy_with_ci"] or not decision_flags["beats_legacy_with_p_value"]:
-            reason_summary.append("legacy に対する統計的優位が十分ではありません。")
-        if not decision_flags["calibration_logloss_non_worse"]:
-            reason_summary.append("候補 calibration 後の logloss が raw を明確に改善または維持できていません。")
-        if not decision_flags["calibration_brier_non_worse"]:
-            reason_summary.append("候補 calibration 後の Brier が raw より悪化しています。")
-        if not decision_flags["calibration_ece_guardrail"]:
-            reason_summary.append("候補 calibration 後の ECE が許容範囲を満たしていません。")
+        reason_summary.append("比較候補はいずれも統計・calibration の必須 guardrail を満たさなかったため、既存 production を維持します。")
+        for variant_name, payload in challenger_decisions.items():
+            if payload.get("reason_summary"):
+                reason_summary.append(f"{variant_name}: {payload['reason_summary'][0]}")
+
+    ranked_challengers = [row for row in rankings if row.get("variant") != production_variant]
+    primary_candidate_variant = (
+        promotion_candidates[0]["variant"]
+        if promotion_candidates
+        else (ranked_challengers[0]["variant"] if ranked_challengers else None)
+    )
+    primary_candidate_method = (
+        promotion_candidates[0]["selected_calibration_method"]
+        if promotion_candidates
+        else (
+            (calibration_selections.get(primary_candidate_variant) or {}).get("recommended_method", NO_CALIBRATION_METHOD)
+            if primary_candidate_variant
+            else NO_CALIBRATION_METHOD
+        )
+    )
 
     return {
-        "candidate_variant": MULTIHOT_MODEL_VARIANT,
-        "candidate_calibration_method": candidate_selected_method,
+        "candidate_variant": primary_candidate_variant,
+        "candidate_calibration_method": primary_candidate_method,
         "production_variant": production_variant,
         "production_saved_calibration_method": production_calibration_method,
         "recommended_variant": recommended_variant,
@@ -1682,15 +1864,17 @@ def build_adoption_decision(
         "metric": "logloss",
         "alpha": alpha,
         "rule": {
-            "multihot_vs_best_static": "bootstrap_ci.upper < 0 and permutation_test.p_value < alpha",
-            "multihot_vs_legacy": "bootstrap_ci.upper < 0 and permutation_test.p_value < alpha",
+            "variant_vs_best_static": "bootstrap_ci.upper < 0 and permutation_test.p_value < alpha",
+            "variant_vs_legacy": "bootstrap_ci.upper < 0 and permutation_test.p_value < alpha when legacy comparison is available",
             "candidate_calibration": (
                 "selected calibration must keep post-calibration logloss/brier non-worse vs raw, "
                 "and ECE must improve vs raw or stay <= ece_threshold"
             ),
+            "selection_policy": "recommend the lowest-logloss challenger that passes all required guardrails; otherwise hold the current production variant",
         },
-        "flags": decision_flags,
-        "should_promote_candidate": should_promote_multihot,
+        "challenger_decisions": challenger_decisions,
+        "flags": challenger_decisions.get(recommended_variant, {}).get("flags", {}),
+        "should_promote_candidate": bool(promotion_candidates),
         "reason_codes": reason_codes,
         "reason_summary": reason_summary,
         "ece_threshold": ece_threshold,
@@ -1875,8 +2059,13 @@ def build_manifest(
         "model_variants": {
             variant_name: {
                 "label": payload.get("label"),
+                "model_family": payload.get("model_family"),
                 "feature_strategy": payload.get("feature_strategy"),
+                "feature_channels": payload.get("feature_channels"),
                 "feature_column_count": payload.get("feature_column_count"),
+                "input_summary": payload.get("input_summary"),
+                "set_pooling": payload.get("set_pooling"),
+                "lookback_integration": payload.get("lookback_integration"),
                 "selected_evaluation_calibration_method": (
                     (payload.get("calibration_selection") or {}).get("recommended_method", NO_CALIBRATION_METHOD)
                 ),
@@ -1934,6 +2123,7 @@ def train_for_type(loto_type, args):
         prepared_datasets[variant_name] = dataset
         raw_features = dataset["raw_features"]
         targets = dataset["targets"]
+        dataset_metadata = dataset["dataset_metadata"]
 
         if data_fingerprint is None:
             data_fingerprint = build_data_fingerprint(
@@ -1968,6 +2158,7 @@ def train_for_type(loto_type, args):
                 df=df,
                 raw_features=raw_features,
                 targets=targets,
+                dataset_metadata=dataset_metadata,
                 loto_type=loto_type,
                 model_variant=variant_name,
                 pick_count=config["pick_count"],
@@ -1994,6 +2185,7 @@ def train_for_type(loto_type, args):
                 df=df,
                 raw_features=raw_features,
                 targets=targets,
+                dataset_metadata=dataset_metadata,
                 loto_type=loto_type,
                 model_variant=variant_name,
                 pick_count=config["pick_count"],
@@ -2038,13 +2230,14 @@ def train_for_type(loto_type, args):
     raw_features = production_dataset["raw_features"]
     targets = production_dataset["targets"]
     feature_cols = production_dataset["feature_cols"]
+    production_dataset_metadata = production_dataset["dataset_metadata"]
     training_context = build_training_context(
         args=args,
         loto_type=loto_type,
         feature_cols=feature_cols,
         pick_count=config["pick_count"],
         max_num=config["max_num"],
-        dataset_metadata=production_dataset["dataset_metadata"],
+        dataset_metadata=production_dataset_metadata,
     )
     primary_variant_payload = model_variant_reports[args.model_variant]
     legacy_holdout = primary_variant_payload["legacy_holdout"]
@@ -2096,6 +2289,8 @@ def train_for_type(loto_type, args):
         raw_features=raw_features,
         targets=targets,
         feature_cols=feature_cols,
+        dataset_metadata=production_dataset_metadata,
+        model_variant=args.model_variant,
         max_num=config["max_num"],
         epochs=args.final_epochs,
         batch_size=args.batch_size,
@@ -2161,6 +2356,7 @@ def train_for_type(loto_type, args):
             "evaluation_calibration_methods": args.evaluation_calibration_methods,
             "calibration_artifact_path": final_artifact_status.get("calibration_artifact_path"),
         },
+        "Model (Primary)": compat_model_metrics,
         "Model (LSTM)": compat_model_metrics,
         "Baselines": compat_static_baselines,
         "Online Baselines": compat_online_baselines,
@@ -2216,7 +2412,7 @@ def parse_args():
     parser.add_argument(
         "--evaluation_model_variants",
         default="legacy,multihot",
-        help="評価対象 variant をカンマ区切りで指定 (例: legacy,multihot)",
+        help="評価対象 variant をカンマ区切りで指定 (例: legacy,multihot,deepsets)",
     )
     parser.add_argument(
         "--saved_calibration_method",

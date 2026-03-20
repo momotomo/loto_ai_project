@@ -75,7 +75,13 @@ def build_variant_summary_rows(report):
                 "variant": variant_name,
                 "label": safe_variant_label(variant_name),
                 "dataset_variant": payload.get("dataset_variant", variant_name),
+                "model_family": payload.get("model_family", "-"),
                 "feature_strategy": payload.get("feature_strategy", "-"),
+                "feature_channels": ",".join(payload.get("feature_channels") or []),
+                "set_pooling": payload.get("set_pooling", "-"),
+                "lookback_integration": payload.get("lookback_integration", "-"),
+                "set_cardinality": ((payload.get("input_summary") or {}).get("set_cardinality")),
+                "element_feature_count": ((payload.get("input_summary") or {}).get("element_feature_count")),
                 "selected_calibration_method": calibration_selection.get(
                     "recommended_method", DEFAULT_SAVED_CALIBRATION_METHOD
                 ),

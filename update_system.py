@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
     parser.add_argument("--train_preset", choices=["default", "fast", "smoke"], default="default", help="train_prob_model.py に渡す preset")
     parser.add_argument("--model_variant", choices=sorted(MODEL_VARIANT_CHOICES), default=DEFAULT_MODEL_VARIANT, help="保存する本番 artifact の model variant")
-    parser.add_argument("--evaluation_model_variants", help="評価対象 variant をカンマ区切りで指定 (例: legacy,multihot)")
+    parser.add_argument("--evaluation_model_variants", help="評価対象 variant をカンマ区切りで指定 (例: legacy,multihot,deepsets)")
     parser.add_argument(
         "--saved_calibration_method",
         choices=sorted(CALIBRATION_METHOD_CHOICES),

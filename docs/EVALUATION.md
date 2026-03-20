@@ -2,7 +2,7 @@
 
 ## walk-forward (rolling-origin)
 - 評価対象は draw 単位の時系列サンプルで、各サンプルは直近 `LOOKBACK_WINDOW` 回を入力、次回 draw の multi-hot を正解とする。
-- 入力表現は 2 系統ある。`legacy` は既存の tabular 特徴、`multihot` は 1 draw を `max_num` 次元 multi-hot とし、各番号に `hit / frequency / gap` を付与した時系列を使う。
+- 入力表現は 3 系統ある。`legacy` は既存の tabular 特徴、`multihot` は 1 draw を `max_num` 次元 multi-hot とし各番号に `hit / frequency / gap` を付与した時系列、`deepsets` は 1 draw を当選番号の集合として扱い各 element に `number_norm / frequency / gap` を付与して shared encoder -> mean pooling -> lookback LSTM に渡す。
 - `legacy_holdout` は従来互換の単発 split。
 - `walk_forward` は expanding-window 方式で train を広げ、固定長 test window を複数 fold で評価する。
 - `legacy_holdout` と `walk_forward` はどちらも leak-free 評価で、scaler は train 期間だけで fit する。
@@ -32,11 +32,14 @@
   - `legacy_vs_best_static`
   - `multihot_vs_best_static`
   - `multihot_vs_legacy`
+  - `deepsets_vs_best_static`
+  - `deepsets_vs_legacy`
+  - `deepsets_vs_multihot`
 - 主比較は proper scoring rule である logloss を使う。Top-k は補助指標として解釈する。
 
 ## 採用判定ルール
 - `decision_summary.rule` にルール文字列を保存する。
-- 現行ルールは `multihot_vs_best_static` と `multihot_vs_legacy` の両方で、`bootstrap_ci.upper < 0` かつ `permutation_test.p_value < alpha` を満たし、さらに候補 calibration 後の logloss / Brier が raw 比で悪化せず、ECE が raw 改善または threshold 内にあるときだけ multihot を昇格候補とする。
+- 現行ルールは challenger variant ごとに `variant_vs_best_static` と `variant_vs_legacy` の両方で、`bootstrap_ci.upper < 0` かつ `permutation_test.p_value < alpha` を満たし、さらに候補 calibration 後の logloss / Brier が raw 比で悪化せず、ECE が raw 改善または threshold 内にあるときだけ昇格候補とする。
 - 条件を満たさない場合は既存 production variant を維持する。
 
 ## 集計評価と回別照合の違い
@@ -65,13 +68,13 @@
 - online baseline は test 実測を使うが、予測後にのみ状態更新する。
 
 ## preset の使い分け
-- 通常: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot`
-- calibration 比較つき: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic`
+- 通常: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets`
+- calibration 比較つき: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic`
 - 短時間確認: `venv/bin/python train_prob_model.py --loto_type loto6 --preset fast`
-- 最小 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot`
-- multihot 保存 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant multihot --evaluation_model_variants legacy,multihot --skip_final_train`
+- 最小 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets`
+- deepsets 保存 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant deepsets --evaluation_model_variants legacy,multihot,deepsets --skip_final_train`
 - 評価だけ更新したい場合: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --skip_final_train`
-- 実験追跡込み: `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"multihot","evaluation_model_variants":"legacy,multihot","refresh_data":false,"skip_final_train":true}'`
+- 実験追跡込み: `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"deepsets","evaluation_model_variants":"legacy,multihot,deepsets","refresh_data":false,"skip_final_train":true}'`
 
 ## 再現性メモ
 - `eval_report_*.json` と `manifest_*.json` には `data_fingerprint` / `training_context` / `runtime_environment` を保存する。

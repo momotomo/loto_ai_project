@@ -33,6 +33,7 @@
   - `run_options.evaluation_calibration_methods`
   - `calibration`
   - `calibration_evaluation`
+  - `Model (Primary)`
 
 ## manifest の要点
 - `schema_version`
@@ -57,6 +58,8 @@
   - `evaluation_calibration_methods`
   - `feature_strategy`
   - `feature_channels`
+  - `model_family`
+  - `input_summary`
   - `hyperparameters`
 - `runtime_environment`
   - `python_version`
@@ -101,12 +104,13 @@
 - `runs/` は最新 bundle の置き場ではなく、実験単位の追跡台帳として使う。
 - `prediction_history` は集計指標の根拠を draw 単位で見返すための artifact。Streamlit の「✅ 実績との照合」タブが主な参照先。
 - `model_variants` は評価用比較台帳で、保存済み本番 artifact は `training_context.model_variant` と `metrics_summary.saved_model_variant` を見る。
+- `model_variants.*.input_summary` には `set_cardinality` / `element_feature_count` / `pooling` など variant ごとの入力構成差分が入る。`deepsets` ではここを見れば集合 encoder の前提を追える。
 - `statistical_tests` は draw 単位 logloss 差の CI / permutation test を保存し、比較時に使った calibration method も残す。運用更新の判定は `decision_summary` を参照する。
 - `calibration_evaluation` / `manifest.calibration` は raw / post-calibration の logloss・Brier・ECE・reliability bins を読み解く入口として使う。
 - live 予測履歴は今回は保存しないが、将来は `pending/resolved` の 2 段階で別 artifact に拡張できるよう JSON 形式を分離している。
 - モデル本体と scaler は再生成可能だが、UI 起動には必要。
 - Streamlit の予測タブは `processed.csv` / `feature_cols.json` / `scaler.pkl` / `model.keras` の世代が揃っている前提。Kaggle 同期ではこれらを一時ディレクトリにまとめて取得してから最後に入れ替える。
-- multihot artifact では `feature_cols.json` が派生特徴名の並びを持ち、UI / CLI は manifest の `model_variant` を使って同じ並びの入力を再構築する。
+- `multihot` / `deepsets` artifact では `feature_cols.json` が派生特徴名の並びを持ち、UI / CLI は manifest の `model_variant` / `input_summary` を使って同じ並びの入力を再構築する。
 - manifest の `artifact_metadata` は model/scaler/feature_cols/eval_report/prediction_history の hash と size を保持する。manifest 自身の hash は自己参照を避けるため run tracking 側で見る。
 - GitHub Actions の翌営業日実行では対象 loto_type だけ更新される。同期側も loto_type ごとに完全 bundle を判定し、完全な loto_type だけを部分更新する。
 - clean sync は manifest の `artifact_schema_version` / `bundle_id` を基準に行う。更新対象 loto_type では新 bundle を temp copy で準備してから置換し、最後に不要な古いローカル artifact を掃除する。

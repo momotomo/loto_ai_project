@@ -30,3 +30,22 @@ def test_app_helpers_require_calibrator_only_when_manifest_enables_it(monkeypatc
     assert manifest_requires_calibrator(manifest) is True
     assert any("calibrator" in path for path in missing)
     assert manifest_requires_calibrator({"training_context": {"saved_calibration_method": "none"}}) is False
+
+
+def test_app_helpers_preserve_new_variant_history_rows():
+    normalized = normalize_prediction_history_df(
+        pd.DataFrame(
+            [
+                {
+                    "draw_id": 2,
+                    "predicted_top_k_hit_count": 1,
+                    "model_variant": "deepsets",
+                    "calibration_method": "temperature",
+                    "evaluation_mode": "walk_forward",
+                }
+            ]
+        )
+    )
+
+    assert normalized.loc[0, "model_variant"] == "deepsets"
+    assert normalized.loc[0, "calibration_method"] == "temperature"
