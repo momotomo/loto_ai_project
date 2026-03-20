@@ -1,12 +1,19 @@
 # loto_ai_project
 
-宝くじ予測の差は極小という前提で、LSTM による確率ベクトル出力と、信用できる時系列評価を重視するプロジェクトです。主な成果物は `eval_report_*.json`、`manifest_*.json`、`prediction_history_*.json`、`*_prob.keras`、`*_scaler.pkl` です。
+宝くじ予測の差は極小という前提で、LSTM による確率ベクトル出力と、信用できる時系列評価を重視するプロジェクトです。主な成果物は `eval_report_*.json`、`manifest_*.json`、`prediction_history_*.json`、`*_prob.keras`、`*_scaler.pkl` です。Phase 1 では精度誇張ではなく、実験再現性・artifact 整合性・CI の信用度を優先します。
 
 ## 主要コマンド
 - `python data_collector.py --loto_type loto6`
 - `python train_prob_model.py --loto_type loto6`
+- `python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"refresh_data":false,"skip_final_train":true}'`
 - `python update_system.py`
 - `streamlit run app.py`
+
+## 依存と run tracking
+- `requirements.txt` は direct dependency を固定し、`requirements.lock` は freeze ベースの lock として CI で使います。
+- `scripts/run_experiment.py` は run ごとに `runs/` へ config・source hash・artifact copy・artifact hash を保存します。
+- `manifest_*.json` と `eval_report_*.json` には `data_fingerprint`、`training_context`、`runtime_environment` が入り、data hash / preprocessing version / seed / preset / Python / dependency version を確認できます。
+- `smoke` preset は plumbing 確認用の 0-epoch 構成です。
 
 ## Walk-forward 評価とは
 単発の holdout ではなく、時系列順を保ったまま train 区間を広げ、固定長の test window を複数回ずらして検証する方法です。このリポジトリでは各 fold ごとに scaler を train 期間のみで fit し直し、fold 単位の指標と平均・分散を `eval_report_*.json` に保存します。
@@ -25,6 +32,7 @@
 - その場合でも評価タブと実績照合タブは見られるようにしているので、manifest や prediction history を先に確認できます。
 - GitHub Actions の翌営業日実行では、対象 loto_type だけ学習されます。Kaggle 同期も loto_type ごとに bundle 完全性を判定し、完全なものだけ部分更新します。
 - `manifest_{loto_type}.json` には `artifact_schema_version` と `bundle_id` が入ります。同期はこの bundle 単位で検証し、新 bundle を temp copy で準備してから置換し、最後に不要な古い artifact だけ掃除します。
+- 新しい manifest では `data_fingerprint` / `training_context` / `runtime_environment` / `artifact_metadata` も確認できます。
 
 ## Docs
 - `AGENT.md`

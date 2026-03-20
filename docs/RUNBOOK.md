@@ -75,17 +75,29 @@
 - 対処:
   - `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke`
   - `venv/bin/python train_prob_model.py --loto_type loto6 --preset fast`
-  - `venv/bin/python update_system.py --loto_type loto6 --train_preset smoke`
+  - `venv/bin/python update_system.py --loto_type loto6 --train_preset smoke --skip_data_refresh`
 - メモ:
   - `legacy_holdout` / `walk_forward` は leak-free 評価。
   - final model は運用用の全データ fit。
   - `--skip_final_train` は既存運用成果物を再利用し、互換成果物が無い場合だけ 0-epoch の雛形を保存する。
+  - `smoke` preset は 0-epoch の plumbing 確認用。
 
 ## update_system 失敗
 - 症状: `update_system.py` 実行中に途中で停止する。
 - 復旧:
   - 失敗したステップのスクリプトを単体で実行する。
   - `data_collector.py` → `train_prob_model.py` → `predict.py` の順で個別に確認する。
+  - network 要因を切り分けたい場合は `venv/bin/python update_system.py --loto_type loto6 --train_preset smoke --skip_final_train --skip_data_refresh` を使う。
+
+## 実験の再現 run を残したい
+- 症状: どの config / source / artifact で実験したかを run 単位で残したい。
+- 対処:
+  - `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"refresh_data":false,"skip_final_train":true}'`
+- 生成物:
+  - `runs/<run_id>/config/*.json`
+  - `runs/<run_id>/source_hashes.json`
+  - `runs/<run_id>/run_summary.json`
+  - `runs/<run_id>/artifacts/...`
 
 ## GitHub Actions からの Kaggle kick 失敗
 - 症状: `.github/workflows/kaggle_kick.yml` が skip 以外で失敗する。

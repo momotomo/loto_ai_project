@@ -14,6 +14,8 @@ def parse_args():
     parser.add_argument("--loto_type", choices=sorted(LOTO_CONFIG.keys()), help="対象の宝くじ種類を1つに絞る")
     parser.add_argument("--train_preset", choices=["default", "fast", "smoke"], default="default", help="train_prob_model.py に渡す preset")
     parser.add_argument("--skip_final_train", action="store_true", help="train_prob_model.py の final 学習を省略する")
+    parser.add_argument("--skip_data_refresh", action="store_true", help="data_collector.py を実行せず、既存 data/*.csv を使う")
+    parser.add_argument("--seed", type=int, default=42, help="train_prob_model.py に渡す乱数 seed")
     return parser.parse_args()
 
 
@@ -27,6 +29,7 @@ def build_command(script_name, loto_type=None):
 def build_train_command(args):
     command = build_command("train_prob_model.py", args.loto_type)
     command.extend(["--preset", args.train_preset])
+    command.extend(["--seed", str(args.seed)])
     if args.skip_final_train:
         command.append("--skip_final_train")
     return command
@@ -69,10 +72,13 @@ def main():
     print(" 🚀 宝くじAI 全自動アップデートシステム開始 (確率モデル版)")
     print("=======================================================\n")
 
-    run_step(
-        "📡 [1/3] Webから最新の過去データをダウンロード中...",
-        build_command("data_collector.py", args.loto_type),
-    )
+    if args.skip_data_refresh:
+        print("📡 [1/3] データ更新をスキップし、既存 data/*.csv を使用します...")
+    else:
+        run_step(
+            "📡 [1/3] Webから最新の過去データをダウンロード中...",
+            build_command("data_collector.py", args.loto_type),
+        )
 
     run_step(
         "\n🧠 [2/3] 確率モデル(LSTM)の評価と本学習を実行中... (数分かかります)",

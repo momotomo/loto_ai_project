@@ -17,6 +17,7 @@ import streamlit as st
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 
+from artifact_utils import inspect_prediction_artifact_integrity as inspect_prediction_artifact_integrity_helper
 from config import ARTIFACT_SCHEMA_VERSION, LOOKBACK_WINDOW, LOTO_CONFIG, generate_valid_sample
 
 # --- Mac環境安定化設定 ---
@@ -637,83 +638,14 @@ def get_missing_prediction_artifacts(loto_type, df, feature_cols, model, scaler)
     return missing
 
 
-def normalize_model_input_shape(model):
-    if model is None:
-        return None
-
-    input_shape = getattr(model, "input_shape", None)
-    if isinstance(input_shape, list):
-        input_shape = input_shape[0] if input_shape else None
-    if isinstance(input_shape, tuple):
-        return input_shape
-    return None
-
-
 def inspect_prediction_artifact_integrity(loto_type, df, feature_cols, model, scaler):
-    issues = []
-
-    if df is None or feature_cols is None:
-        return issues
-
-    missing_cols = [column for column in feature_cols if column not in df.columns]
-    if missing_cols:
-        issues.append(
-            {
-                "kind": "missing_columns",
-                "message": "特徴量定義と processed.csv が不整合です。",
-                "missing_cols": missing_cols,
-                "csv_column_count": len(df.columns),
-                "feature_col_count": len(feature_cols),
-            }
-        )
-
-    scaler_feature_count = getattr(scaler, "n_features_in_", None) if scaler is not None else None
-    if scaler_feature_count is not None and scaler_feature_count != len(feature_cols):
-        issues.append(
-            {
-                "kind": "scaler_dimension_mismatch",
-                "message": "scaler の入力次元と feature_cols の長さが一致しません。",
-                "scaler_feature_count": int(scaler_feature_count),
-                "feature_col_count": len(feature_cols),
-            }
-        )
-
-    model_input_shape = normalize_model_input_shape(model)
-    if model_input_shape and len(model_input_shape) >= 3:
-        model_lookback = model_input_shape[1]
-        model_feature_count = model_input_shape[2]
-
-        if model_lookback is not None and int(model_lookback) != int(LOOKBACK_WINDOW):
-            issues.append(
-                {
-                    "kind": "model_lookback_mismatch",
-                    "message": "モデルの入力 lookback と現在の設定が一致しません。",
-                    "model_lookback": int(model_lookback),
-                    "expected_lookback": int(LOOKBACK_WINDOW),
-                }
-            )
-
-        if model_feature_count is not None and int(model_feature_count) != len(feature_cols):
-            issues.append(
-                {
-                    "kind": "model_feature_mismatch",
-                    "message": "モデル入力次元と feature_cols の長さが一致しません。",
-                    "model_feature_count": int(model_feature_count),
-                    "feature_col_count": len(feature_cols),
-                }
-            )
-
-    if len(df) < LOOKBACK_WINDOW:
-        issues.append(
-            {
-                "kind": "insufficient_rows",
-                "message": "processed.csv の行数が LOOKBACK_WINDOW より少ないため予測できません。",
-                "row_count": int(len(df)),
-                "expected_min_rows": int(LOOKBACK_WINDOW),
-            }
-        )
-
-    return issues
+    return inspect_prediction_artifact_integrity_helper(
+        df=df,
+        feature_cols=feature_cols,
+        model=model,
+        scaler=scaler,
+        lookback_window=LOOKBACK_WINDOW,
+    )
 
 
 def render_prediction_integrity_issues(loto_type, issues, manifest=None):
@@ -930,6 +862,9 @@ def render_manifest_section(manifest):
 
     st.subheader("🧾 Artifact Manifest")
     metrics_summary = manifest.get("metrics_summary", {})
+    data_fingerprint = manifest.get("data_fingerprint", {})
+    training_context = manifest.get("training_context", {})
+    runtime_environment = manifest.get("runtime_environment", {})
     primary_model = metrics_summary.get("primary_model") or metrics_summary.get("walk_forward_model", {})
     best_static = metrics_summary.get("best_static_baseline", {})
     evaluation_source = metrics_summary.get("evaluation_source", "walk_forward")
@@ -968,6 +903,30 @@ def render_manifest_section(manifest):
     if manifest.get("generated_at"):
         st.caption(f"generated_at={manifest.get('generated_at')}")
     st.caption(f"evaluation_source={evaluation_source}, final_artifact_status={final_artifact_status}")
+    if training_context:
+        st.caption(
+            "preset="
+            f"{training_context.get('preset', '-')}, "
+            f"seed={training_context.get('seed', '-')}, "
+            f"lookback={training_context.get('lookback_window', '-')}, "
+            f"feature_cols={training_context.get('feature_column_count', '-')}"
+        )
+    if data_fingerprint:
+        data_hash = data_fingerprint.get("data_hash")
+        st.caption(
+            "preprocessing_version="
+            f"{data_fingerprint.get('preprocessing_version', '-')}, "
+            f"data_hash={(data_hash[:12] + '...') if isinstance(data_hash, str) else '-'}"
+        )
+    dependencies = runtime_environment.get("dependencies", {}) if isinstance(runtime_environment, dict) else {}
+    if runtime_environment or dependencies:
+        st.caption(
+            "python="
+            f"{runtime_environment.get('python_version', '-')}, "
+            f"tensorflow={dependencies.get('tensorflow', '-')}, "
+            f"pandas={dependencies.get('pandas', '-')}, "
+            f"numpy={dependencies.get('numpy', '-')}"
+        )
 
     with st.expander("Manifest 詳細", expanded=False):
         st.json(manifest)

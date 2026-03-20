@@ -21,11 +21,13 @@
 - データ収集: `python data_collector.py --loto_type loto6`
 - 全種類のデータ収集: `python data_collector.py`
 - 学習と評価: `python train_prob_model.py --loto_type loto6`
+- 実験追跡つき実行: `python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"refresh_data":false,"skip_final_train":true}'`
 - UI 起動: `streamlit run app.py`
 - 全自動更新: `python update_system.py`
 
 ## 5. テスト方針
 - 最低限 `python -m py_compile $(rg --files -g '*.py' -g '!venv/**')` を通す。
+- `pytest -q` を追加し、validation / leakage / artifact integrity / run tracking の退行を先に止める。
 - 実行チェックは `data_collector.py`、`train_prob_model.py`、`predict.py` の簡易 smoke test を優先する。
 - ネットワーク依存の取得は、失敗してもメッセージで原因が追えることを確認する。
 

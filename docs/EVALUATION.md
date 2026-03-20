@@ -6,6 +6,7 @@
 - `walk_forward` は expanding-window 方式で train を広げ、固定長 test window を複数 fold で評価する。
 - `legacy_holdout` と `walk_forward` はどちらも leak-free 評価で、scaler は train 期間だけで fit する。
 - 一方で final model は運用モデル生成用なので、評価後に全データで fit し直して保存する。評価値と運用モデル生成は分離して考える。
+- `smoke` preset は plumbing 検証用なので 0-epoch で動かし、配線・artifact・CLI/UI 互換の確認に使う。
 
 ## 指標
 - LogLoss (BCE): draw × number の二値確率損失。
@@ -41,3 +42,8 @@
 - 短時間確認: `venv/bin/python train_prob_model.py --loto_type loto6 --preset fast`
 - 最小 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke`
 - 評価だけ更新したい場合: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --skip_final_train`
+- 実験追跡込み: `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"refresh_data":false,"skip_final_train":true}'`
+
+## 再現性メモ
+- `eval_report_*.json` と `manifest_*.json` には `data_fingerprint` / `training_context` / `runtime_environment` を保存する。
+- これにより data hash、preprocessing version、preset、seed、主要 hyperparameter、Python / dependency versions を artifact 単位で追える。
