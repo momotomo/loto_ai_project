@@ -334,6 +334,96 @@ venv/bin/python scripts/run_cross_loto.py --report_only
 信頼性を高めることを優先すること。`cross_loto_report.md` の「Decision Rules」節で
 判断条件を確認できる。
 
+## comparison campaign の運用
+
+### campaign とは
+
+単発の比較実行ではなく、名前付き・ディレクトリ保存・履歴追記型の比較実行単位。
+`scripts/run_campaign.py` が entry point で、`campaign_profiles.py` で定義されたプロファイルを使って
+cross-loto 比較を実行し、結果を `campaigns/<campaign_name>/` へ保存して `data/campaign_history.json` を更新する。
+
+**「まず campaign history を見る」運用を優先する。**
+
+### campaign profile の違い
+
+| profile | preset | seeds | loto_types | 用途 |
+|---------|--------|-------|-----------|------|
+| `archcomp_lite` | fast | 2 | loto6 のみ | 軽量確認・sanity check（決定に使わない） |
+| `archcomp` | archcomp | 3 | 全 3 種 | 標準 campaign（既定）。決定判断に使う |
+| `archcomp_full` | default | 5 | 全 3 種 | `run_more_seeds` が ≥3 回続く場合の拡充 |
+
+各プロファイルは `epochs / patience / batch_size` (preset 経由) + `seeds / loto_types / evaluation_model_variants / calibration_methods` を一括管理する。
+
+### campaign の実行
+
+```bash
+# プロファイル一覧
+python scripts/run_campaign.py --list_profiles
+
+# 標準 archcomp キャンペーン
+python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile archcomp
+
+# 軽量確認
+python scripts/run_campaign.py --campaign_name 2026-03-21_lite --profile archcomp_lite
+
+# 拡充版（run_more_seeds が続く場合）
+python scripts/run_campaign.py --campaign_name 2026-03-21_full --profile archcomp_full
+
+# 既存の comparison_summary を再集計（学習省略）
+python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile archcomp --skip_training
+```
+
+### campaign の artifact 一覧
+
+| artifact | 場所 | 内容 |
+|----------|------|------|
+| `cross_loto_report.md` | `campaigns/<name>/` | evidence pack（campaign ごと、まず読む） |
+| `campaign_metadata.json` | `campaigns/<name>/` | profile / seeds / timing |
+| `cross_loto_summary.json` | `campaigns/<name>/` | variant ranking / pairwise |
+| `recommendation.json` | `campaigns/<name>/` | next_action 推奨 |
+| `comparison_summary_{loto_type}.json` | `campaigns/<name>/` | per-loto 集計 |
+| `campaign_diff_report.md` | `data/` | 前回 campaign との差分（**最初に確認する**） |
+| `campaign_history.json` | `data/` | 全 campaign 履歴 + recommendation stability |
+| `campaign_history.csv` | `data/` | 表計算用履歴 |
+
+### artifact の読む順序
+
+1. `data/campaign_diff_report.md` — 前回からの変化（何が変わったか）
+2. `data/campaign_history.json` → `recommendation_stability` — 安定性トレンド
+3. `campaigns/<name>/cross_loto_report.md` — 今回 campaign の evidence pack
+4. `campaigns/<name>/cross_loto_summary.json` — 必要なら詳細 raw JSON
+
+### recommendation stability の読み方
+
+`data/campaign_history.json` の `recommendation_stability` には以下が含まれる:
+
+```json
+{
+  "total_campaigns": 4,
+  "latest_action": "run_more_seeds",
+  "consecutive_same_action": 3,
+  "consecutive_same_challenger": 4,
+  "consecutive_keep_production": 4,
+  "consecutive_run_more_seeds": 3
+}
+```
+
+- `consecutive_same_action >= 3` かつ `run_more_seeds` → `archcomp_full` を実行して seed 数を増やす
+- `consecutive_same_action >= 2` かつ `consider_promotion` → 慎重に promotion を検討する
+- `consecutive_same_action >= 3` かつ `hold` → architecture 差が現れない可能性が高い
+- `campaign_diff_report.md` にも stability guidance が記載される
+
+### 何回続いたら PMA / ISAB / HPO に進むか
+
+以下の条件が揃ったら次の variant 実装を検討できる:
+
+1. `recommendation.whether_to_try_pma_or_isab_next == true` が 2 回以上連続
+   （= `settransformer_vs_deepsets` overall `both_pass_count / run_count ≥ 0.5`）
+2. `recommended_next_action` が `consider_promotion` または `run_more_seeds`（`hold` でない）
+3. `archcomp` または `archcomp_full` profile での campaign に基づく（lite は不可）
+
+この条件が満たされるまでは campaign を継続し、比較の信頼性を高めることを優先する。
+
 ## 再現性メモ
 - `eval_report_*.json` と `manifest_*.json` には `data_fingerprint` / `training_context` / `runtime_environment` を保存する。
 - これにより data hash、preprocessing version、preset、seed、model variant、主要 hyperparameter、Python / dependency versions を artifact 単位で追える。

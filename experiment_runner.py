@@ -43,6 +43,8 @@ TRACKED_SOURCE_FILES = [
     "requirements.lock",
     "artifact_utils.py",
     "calibration_utils.py",
+    "campaign_profiles.py",
+    "campaign_manager.py",
     "comparison_summary.py",
     "cross_loto_summary.py",
     "cross_loto_report.py",
@@ -57,6 +59,7 @@ TRACKED_SOURCE_FILES = [
     "app.py",
     "scripts/kaggle_entry.py",
     "scripts/kaggle_prepare_kernel_dir.py",
+    "scripts/run_campaign.py",
 ]
 
 TRACKED_ARTIFACT_FILES = [
