@@ -138,6 +138,7 @@
      ```
      data/governance_report.md
      ```
+     - **Comparability**（⬅️ **最初に確認** — 比較の前提条件）
      - Current recommendation（latest campaign の推奨）
      - Promotion Readiness Gate（🟢/🟡/🔴）
      - Regression Alert（✅/⚠️/🔶/🔴）
@@ -145,22 +146,34 @@
      - Recent Trend Overview（variant rank/logloss の傾向）
      - Production Status（変えてよい理由 / 変えない理由）
      - PMA / ISAB / HPO Guidance（次に進むべきか）
-  2. 詳細が必要なら順番に読む:
+  2. Comparability セクションで ❌ エラーがあれば、以降のシグナルを保留し原因を確認する:
+     - `data/comparability_report.md` を読んで `failed_checks` を確認する
+     - 原因（loto_types の不一致・variant セットの変更・benchmark 不一致など）を解消して再実行
+  3. 詳細が必要なら順番に読む:
+     - `data/comparability_report.md` — campaign 間の比較可能性詳細（benchmark・loto・variant 照合）
      - `data/trend_summary.md` — 直近 N campaign の傾向（rank 推移・logloss 推移・pairwise 推移）
      - `data/regression_alert.md` — 悪化シグナルの詳細
      - `data/promotion_gate.md` — 昇格検討 gate の条件詳細
-     - `data/campaign_diff_report.md` — 前回比較からの変化
+     - `data/campaign_diff_report.md` — 前回比較からの変化（comparability セクション含む）
      - `campaigns/<name>/cross_loto_report.md` — 詳細 evidence pack
 
 - artifact の読み順:
   ```
-  1. data/governance_report.md     ← まずここを読む
-  2. data/trend_summary.md         ← 傾向が見たいとき
-  3. data/regression_alert.md      ← 悪化シグナルの詳細
-  4. data/promotion_gate.md        ← 昇格 gate 条件の詳細
-  5. data/campaign_diff_report.md  ← 前回との差分
-  6. campaigns/<name>/cross_loto_report.md  ← evidence pack
+  1. data/governance_report.md        ← まずここを読む（comparability 含む）
+  2. data/comparability_report.md     ← 比較可能性の詳細（必要時）
+  3. data/trend_summary.md            ← 傾向が見たいとき
+  4. data/regression_alert.md         ← 悪化シグナルの詳細
+  5. data/promotion_gate.md           ← 昇格 gate 条件の詳細
+  6. data/campaign_diff_report.md     ← 前回との差分（comparability セクション付き）
+  7. campaigns/<name>/cross_loto_report.md  ← evidence pack
   ```
+
+- comparability status の解釈:
+  | status | 意味 | 対処 |
+  |--------|------|------|
+  | ✅ COMPARABLE | 全 campaign ペアが比較可能 | trend/regression をそのまま信頼 |
+  | ⚠️ WITH WARNINGS | 比較可能だが注意点あり | warning を読んで caution 付きで解釈 |
+  | ❌ NOT COMPARABLE | 比較不能なペアあり | 結論保留、条件を揃えて再実行 |
 
 - gate status の解釈:
   | gate | 意味 | 次のアクション |
@@ -194,8 +207,10 @@
      ```
   2. **まず governance report を読む**（campaign 実行後の総合判断に使う）:
      - `data/governance_report.md` — 全 governance シグナルをまとめた運用レポート（**最優先で読む**）
+     - governance report 内の **Comparability セクションを最初に確認する**（比較の前提条件）
   3. 詳細が必要なら個別 artifact を読む:
-     - `data/campaign_diff_report.md` — variant ranking / pairwise 変化・recommendation 変化
+     - `data/comparability_report.md` — campaign 間の比較可能性詳細（❌ の場合は必読）
+     - `data/campaign_diff_report.md` — variant ranking / pairwise 変化・recommendation 変化（comparability セクション付き）
      - `data/trend_summary.md` — 直近 N campaign の傾向（rank・logloss・pairwise 推移）
      - `data/regression_alert.md` — 悪化シグナルの詳細（alert_level: none/low/medium/high）
      - `data/promotion_gate.md` — 昇格検討 gate の条件詳細（gate_status: red/yellow/green）

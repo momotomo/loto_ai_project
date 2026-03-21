@@ -40,6 +40,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from comparability_checker import check_history_comparability, save_comparability_artifacts
+
 TREND_SUMMARY_SCHEMA_VERSION = 1
 REGRESSION_ALERT_SCHEMA_VERSION = 1
 PROMOTION_GATE_SCHEMA_VERSION = 1
@@ -230,6 +232,12 @@ def build_trend_summary(
         if challenger_counts else None
     )
 
+    # -- Comparability assessment for the window --
+    comp_result = check_history_comparability(window)
+    comparability_note = comp_result.get("summary", "")
+    comparability_severity = comp_result.get("overall_severity", "ok")
+    comparability_overall = comp_result.get("overall_comparable", True)
+
     return {
         "schema_version": TREND_SUMMARY_SCHEMA_VERSION,
         "generated_at": _now_iso(),
@@ -244,6 +252,9 @@ def build_trend_summary(
         "dominant_action": dominant_action,
         "dominant_challenger": dominant_challenger,
         "action_distribution": action_counts,
+        "comparability_overall": comparability_overall,
+        "comparability_severity": comparability_severity,
+        "comparability_note": comparability_note,
     }
 
 
@@ -262,6 +273,23 @@ def build_trend_summary_md(trend: dict[str, Any]) -> str:
         f"Campaigns considered: "
         + ", ".join(f"**{c}**" for c in (trend.get("campaigns_considered") or []))
     )
+    lines.append("")
+
+    # Comparability note
+    comp_sev = trend.get("comparability_severity", "ok")
+    comp_overall = trend.get("comparability_overall", True)
+    comp_note = trend.get("comparability_note", "")
+    if comp_sev == "error":
+        lines.append(
+            f"> ❌ **Comparability issue**: {comp_note}  "
+        )
+        lines.append(
+            "> Trend analysis below may be unreliable — campaigns were run under different conditions."
+        )
+    elif comp_sev == "warning":
+        lines.append(f"> ⚠️ **Comparability warning**: {comp_note}")
+    else:
+        lines.append(f"> ✅ **Comparability**: {comp_note or 'All campaigns in window are comparable.'}")
     lines.append("")
 
     # Recommendation history
@@ -584,10 +612,24 @@ def build_regression_alert(
             "may be borderline threshold crossing. Run more seeds."
         )
 
+    # -- Comparability check (latest vs baseline) --
+    window = history[-window_size:] if len(history) > window_size else history
+    comp_result = check_history_comparability(window)
+    comparability_caution = not comp_result.get("overall_comparable", True)
+    comparability_note = comp_result.get("summary", "")
+    if comparability_caution and alert_level != "high":
+        summary = (
+            f"[COMPARABILITY CAUTION] {summary}  "
+            "Note: one or more campaign pairs are not fully comparable — "
+            "this alert may reflect condition changes rather than genuine regression."
+        )
+
     return {
         "schema_version": REGRESSION_ALERT_SCHEMA_VERSION,
         "generated_at": _now_iso(),
         "alert_level": alert_level,
+        "comparability_caution": comparability_caution,
+        "comparability_note": comparability_note,
         "latest_campaign": latest_name,
         "baseline_campaigns": baseline_names,
         "affected_variants": sorted(affected_variants),
@@ -868,15 +910,37 @@ def build_promotion_gate(
             f"{consec_pma_streak} consecutive campaigns"
         )
 
+    # Condition 9: comparability (campaigns must be comparable for gate to be green)
+    comp_result = check_history_comparability(window)
+    comparability_ok = comp_result.get("overall_comparable", True)
+    comparability_severity = comp_result.get("overall_severity", "ok")
+    comparability_note = comp_result.get("summary", "")
+    if comparability_ok:
+        if comparability_severity == "ok":
+            conditions_passed.append(
+                "comparability_ok: all campaigns in evidence window are fully comparable"
+            )
+        else:
+            conditions_passed.append(
+                f"comparability_ok: campaigns are comparable with warnings — {comparability_note}"
+            )
+    else:
+        blockers.append(
+            f"comparability_error: {comparability_note}  "
+            "Cannot trust trend-based promotion signal when campaigns are not comparable."
+        )
+
     # -- Determine gate status --
     n_passed = len(conditions_passed)
     n_blockers = len(blockers)
 
-    # Must-have for green: no high regression, consistent_promote_variants, consistent challenger
+    # Must-have for green: no high regression, consistent_promote_variants, consistent challenger,
+    # and comparability_ok
     must_have_for_green = [
         "no_high_regression",
         "consistent_promote_in_latest",
         "consistent_challenger",
+        "comparability_ok",
     ]
     has_must_haves = all(
         any(c.startswith(key) for c in conditions_passed)
@@ -926,6 +990,9 @@ def build_promotion_gate(
         "gate_status": gate_status,
         "candidate_variant": candidate,
         "evidence_window": evidence_window,
+        "comparability_ok": comparability_ok,
+        "comparability_severity": comparability_severity,
+        "comparability_note": comparability_note,
         "conditions_passed": conditions_passed,
         "blockers": blockers,
         "rationale": rationale,
@@ -998,11 +1065,14 @@ def build_governance_report(
     promotion_gate: dict[str, Any],
     stability: dict[str, Any],
     latest_entry: dict[str, Any] | None = None,
+    comparability_result: dict[str, Any] | None = None,
 ) -> str:
     """Build a combined governance Markdown report for human operators.
 
     This is the first document to read after a campaign run.
-    It provides a concise decision surface across all governance signals.
+    It provides a concise decision surface across all governance signals,
+    starting with comparability so the reader knows whether trend and
+    regression conclusions can be trusted.
     """
     lines: list[str] = []
     lines.append("# Governance Report")
@@ -1017,9 +1087,54 @@ def build_governance_report(
 
     lines.append(
         "> **Reading order**: Start here. For details, see "
-        "`trend_summary.md` → `regression_alert.md` → `promotion_gate.md` → "
-        "`campaign_diff_report.md` → evidence pack in `campaigns/<name>/cross_loto_report.md`."
+        "`comparability_report.md` → `trend_summary.md` → `regression_alert.md` → "
+        "`promotion_gate.md` → `campaign_diff_report.md` → "
+        "evidence pack in `campaigns/<name>/cross_loto_report.md`."
     )
+    lines.append("")
+
+    # --- Comparability (read before drawing any trend/regression conclusions) ---
+    lines.append("## Comparability")
+    lines.append("")
+    lines.append(
+        "> **Check this first**: trend and regression conclusions are only valid when "
+        "campaigns are comparable (same benchmark, loto coverage, variants, and calibration methods)."
+    )
+    lines.append("")
+    if comparability_result is not None:
+        comp_sev = comparability_result.get("overall_severity", "ok")
+        comp_ok = comparability_result.get("overall_comparable", True)
+        comp_emoji = {"ok": "✅", "warning": "⚠️", "error": "❌"}.get(comp_sev, "?")
+        comp_label = "COMPARABLE" if comp_ok else "NOT COMPARABLE"
+        lines.append(f"**Status**: {comp_emoji} {comp_label}")
+        lines.append("")
+        lines.append(comparability_result.get("summary", ""))
+        lines.append("")
+        if comp_sev == "error":
+            lines.append(
+                "> ❌ **Action required**: Campaigns are not comparable.  "
+                "Trend analysis, regression alerts, and promotion gate below may be unreliable.  "
+                "See `comparability_report.md` for details."
+            )
+        elif comp_sev == "warning":
+            lines.append(
+                "> ⚠️ Campaigns are comparable with caveats.  "
+                "Review `comparability_report.md` before acting on trends."
+            )
+        else:
+            lines.append("> ✅ All campaigns in the evidence window are fully comparable.")
+    else:
+        # Derive from trend_summary or promotion_gate if no explicit result
+        comp_sev = trend_summary.get("comparability_severity") or promotion_gate.get("comparability_severity", "ok")
+        comp_ok = trend_summary.get("comparability_overall") if trend_summary.get("comparability_overall") is not None else True
+        comp_note = trend_summary.get("comparability_note", "")
+        comp_emoji = {"ok": "✅", "warning": "⚠️", "error": "❌"}.get(comp_sev, "?")
+        comp_label = "COMPARABLE" if comp_ok else "NOT COMPARABLE"
+        lines.append(f"**Status**: {comp_emoji} {comp_label}")
+        lines.append("")
+        if comp_note:
+            lines.append(comp_note)
+        lines.append("")
     lines.append("")
 
     # --- Current recommendation ---
@@ -1233,6 +1348,14 @@ def save_governance_artifacts(
     paths: dict[str, str] = {}
     latest_entry = history[-1] if history else None
 
+    # 0. Comparability report (generated first; used by governance report)
+    comp_paths = save_comparability_artifacts(history, data_dir=data_dir)
+    paths.update(comp_paths)
+    # Also keep the comparability result in memory for the governance report
+    from comparability_checker import check_history_comparability as _check_compat
+    window_for_comp = history[-window_size:] if len(history) > window_size else history
+    comparability_result = _check_compat(window_for_comp)
+
     # 1. Trend summary
     trend = build_trend_summary(history, window_size=window_size)
     trend_json_path = data_dir / "trend_summary.json"
@@ -1271,13 +1394,14 @@ def save_governance_artifacts(
     gate_md_path.write_text(gate_md, encoding="utf-8")
     paths["promotion_gate.md"] = str(gate_md_path)
 
-    # 4. Governance report
+    # 4. Governance report (includes comparability section)
     gov_md = build_governance_report(
         trend_summary=trend,
         regression_alert=alert,
         promotion_gate=gate,
         stability=stability,
         latest_entry=latest_entry,
+        comparability_result=comparability_result,
     )
     gov_path = data_dir / "governance_report.md"
     gov_path.write_text(gov_md, encoding="utf-8")

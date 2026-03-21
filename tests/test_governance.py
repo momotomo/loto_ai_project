@@ -495,7 +495,16 @@ class TestSaveGovernanceArtifacts:
         stability = compute_recommendation_stability(single_history)
         with tempfile.TemporaryDirectory() as d:
             paths = save_governance_artifacts(single_history, stability, data_dir=d)
-            assert len(paths) == 7
+            # 7 governance artifacts + 2 comparability artifacts = 9
+            assert len(paths) == 9
+            for name in [
+                "trend_summary.json", "trend_summary.md",
+                "regression_alert.json", "regression_alert.md",
+                "promotion_gate.json", "promotion_gate.md",
+                "governance_report.md",
+                "comparability_report.json", "comparability_report.md",
+            ]:
+                assert name in paths, f"Missing: {name}"
 
 
 # ---------------------------------------------------------------------------
@@ -531,8 +540,8 @@ class TestRunCampaignGovernanceSmoke:
         stability = compute_recommendation_stability(multi_history)
         with tempfile.TemporaryDirectory() as d:
             paths = save_governance_artifacts(multi_history, stability, data_dir=d)
-            # All 7 artifacts created
-            assert len(paths) == 7
+            # 7 governance artifacts + 2 comparability artifacts = 9
+            assert len(paths) == 9
             # Governance report is non-empty
             gov_md = Path(paths["governance_report.md"]).read_text(encoding="utf-8")
             assert len(gov_md) > 100
