@@ -45,6 +45,7 @@ TRACKED_SOURCE_FILES = [
     "calibration_utils.py",
     "comparison_summary.py",
     "cross_loto_summary.py",
+    "cross_loto_report.py",
     "evaluation_statistics.py",
     "config.py",
     "data_collector.py",

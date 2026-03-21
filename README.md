@@ -37,10 +37,17 @@ python scripts/run_cross_loto.py \
 - `data/comparison_summary_{loto_type}.json` — 各 loto_type の per-seed 集計
 - `data/cross_loto_summary.json` — 全 loto_type 横断の variant ranking / pairwise / promotion 傾向
 - `data/recommendation.json` — 次に取るべき行動の推奨（hold / run_more_seeds / consider_promotion）
+- `data/cross_loto_report.md` — 上記を人が読める Markdown evidence pack にまとめたもの（**まずここを読む**）
+- `data/variant_metrics.csv` / `data/pairwise_comparisons.csv` / `data/recommendation_summary.csv` — 表計算用 CSV
 
 既存 comparison_summary から集計だけやり直す場合:
 ```bash
 python scripts/run_cross_loto.py --loto_types loto6,loto7,miniloto --skip_training
+```
+
+既存 JSON artifact から Markdown / CSV だけ再生成する場合:
+```bash
+python scripts/run_cross_loto.py --report_only
 ```
 
 詳細は `docs/EVALUATION.md` の `cross-loto comparison と decision artifact` 節を参照。
