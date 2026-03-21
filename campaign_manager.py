@@ -75,6 +75,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from benchmark_registry import resolve_benchmark_for_profile
+
 CAMPAIGN_HISTORY_SCHEMA_VERSION = 1
 CAMPAIGN_DIFF_REPORT_SCHEMA_VERSION = 1
 
@@ -93,6 +95,9 @@ def build_campaign_entry(
     started_at: str | None = None,
     finished_at: str | None = None,
     campaign_dir: str | None = None,
+    evaluation_model_variants: str | None = None,
+    evaluation_calibration_methods: str | None = None,
+    data_fingerprints: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build a campaign history entry from cross_loto summary and recommendation.
 
@@ -132,6 +137,7 @@ def build_campaign_entry(
     return {
         "campaign_name": campaign_name,
         "profile_name": profile_name,
+        "benchmark_name": resolve_benchmark_for_profile(profile_name),
         "generated_at": generated_at,
         "started_at": started_at,
         "finished_at": finished_at,
@@ -139,6 +145,9 @@ def build_campaign_entry(
         "loto_types": cross_loto_summary.get("loto_types") or [],
         "preset": cross_loto_summary.get("preset") or "",
         "seeds": cross_loto_summary.get("seeds") or [],
+        "evaluation_model_variants": evaluation_model_variants or "",
+        "evaluation_calibration_methods": evaluation_calibration_methods or "",
+        "data_fingerprints": data_fingerprints or {},
         "recommended_next_action": recommendation.get("recommended_next_action") or "",
         "recommended_challenger": recommendation.get("recommended_challenger"),
         "keep_production_as_is": recommendation.get("keep_production_as_is", True),
@@ -347,7 +356,11 @@ def build_diff_report(
 
     This is the first document a human should read when reviewing a new campaign.
     It highlights what changed and whether signals are strengthening or weakening.
+    Includes a comparability section so readers know whether metric differences
+    can be trusted.
     """
+    from comparability_checker import check_pair_comparability
+
     lines: list[str] = []
 
     prev_name = prev_entry.get("campaign_name", "?")
@@ -384,6 +397,78 @@ def build_diff_report(
         f"| loto_types | {', '.join(prev_entry.get('loto_types') or [])} "
         f"| {', '.join(curr_entry.get('loto_types') or [])} |"
     )
+    lines.append("")
+
+    # --- Comparability ---
+    lines.append("## Comparability")
+    lines.append("")
+    comp = check_pair_comparability(prev_entry, curr_entry)
+    comp_sev = comp.get("severity", "ok")
+    comp_emoji = {"ok": "✅", "warning": "⚠️", "error": "❌"}.get(comp_sev, "?")
+    comp_label = "COMPARABLE" if comp.get("comparable") else "NOT COMPARABLE"
+    lines.append(f"**Status**: {comp_emoji} {comp_label} (severity: `{comp_sev}`)")
+    lines.append("")
+
+    comp_failed = comp.get("failed_checks") or []
+    comp_warnings = comp.get("warnings") or []
+
+    # Dimension-level summary table
+    same_benchmark = comp.get("benchmark_a") == comp.get("benchmark_b")
+    same_profile = prev_entry.get("profile_name") == curr_entry.get("profile_name")
+    same_loto = set(prev_entry.get("loto_types") or []) == set(curr_entry.get("loto_types") or [])
+    prev_seeds = prev_entry.get("seeds") or []
+    curr_seeds = curr_entry.get("seeds") or []
+    same_seeds_count = len(prev_seeds) == len(curr_seeds)
+    prev_emv = prev_entry.get("evaluation_model_variants") or ""
+    curr_emv = curr_entry.get("evaluation_model_variants") or ""
+    same_variants = (
+        set(v.strip() for v in prev_emv.split(",") if v.strip())
+        == set(v.strip() for v in curr_emv.split(",") if v.strip())
+    ) if prev_emv and curr_emv else None
+    prev_ecm = prev_entry.get("evaluation_calibration_methods") or ""
+    curr_ecm = curr_entry.get("evaluation_calibration_methods") or ""
+    same_calibration = (
+        set(v.strip() for v in prev_ecm.split(",") if v.strip())
+        == set(v.strip() for v in curr_ecm.split(",") if v.strip())
+    ) if prev_ecm and curr_ecm else None
+    prev_fp = prev_entry.get("data_fingerprints") or {}
+    curr_fp = curr_entry.get("data_fingerprints") or {}
+    fp_available = bool(prev_fp and curr_fp)
+    fp_match = (
+        all(prev_fp.get(lt) == curr_fp.get(lt) for lt in set(prev_fp) | set(curr_fp))
+        if fp_available else None
+    )
+
+    def _bool_cell(v) -> str:
+        if v is None:
+            return "N/A"
+        return "✅ Yes" if v else "❌ No"
+
+    lines.append("| Dimension | Same? |")
+    lines.append("|-----------|-------|")
+    lines.append(f"| benchmark | {_bool_cell(same_benchmark)} |")
+    lines.append(f"| profile | {_bool_cell(same_profile)} |")
+    lines.append(f"| loto coverage | {_bool_cell(same_loto)} |")
+    lines.append(f"| seed count | {_bool_cell(same_seeds_count)} |")
+    lines.append(f"| variant set | {_bool_cell(same_variants)} |")
+    lines.append(f"| calibration methods | {_bool_cell(same_calibration)} |")
+    lines.append(f"| data fingerprint | {_bool_cell(fp_match)} |")
+    lines.append("")
+
+    if comp_failed:
+        lines.append("> ⚠️ **Comparability issues detected** — metric differences may not")
+        lines.append("> reflect genuine model quality differences.")
+        lines.append("> Hard failures:")
+        for f in comp_failed:
+            lines.append(f">   - {f}")
+        lines.append("")
+    if comp_warnings:
+        lines.append("Comparability warnings (soft — proceed with caution):")
+        for w in comp_warnings:
+            lines.append(f"  - {w}")
+        lines.append("")
+
+    lines.append(f"*{comp.get('suggested_action', '')}*")
     lines.append("")
 
     # --- Recommendation change ---

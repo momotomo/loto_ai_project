@@ -86,6 +86,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmark_registry import resolve_benchmark_for_profile  # noqa: E402
 from campaign_manager import (  # noqa: E402
     append_campaign_to_history,
     build_campaign_entry,
@@ -93,6 +94,7 @@ from campaign_manager import (  # noqa: E402
     load_campaign_history,
     save_campaign_artifacts,
 )
+from comparability_checker import save_comparability_artifacts  # noqa: E402
 from governance_layer import save_governance_artifacts  # noqa: E402
 from campaign_profiles import (  # noqa: E402
     VALID_PROFILE_NAMES,
@@ -531,10 +533,11 @@ def main() -> None:
 
     finished_at = datetime.now(timezone.utc).isoformat()
 
-    # Save campaign_metadata.json
+    # Save campaign_metadata.json (includes comparability fields)
     campaign_metadata = {
         "campaign_name": args.campaign_name,
         "profile_name": args.profile,
+        "benchmark_name": resolve_benchmark_for_profile(args.profile),
         "profile": profile,
         "run_id": run_id,
         "started_at": started_at,
@@ -545,6 +548,7 @@ def main() -> None:
         "seeds": seeds,
         "preset": preset,
         "evaluation_model_variants": evaluation_model_variants,
+        "evaluation_calibration_methods": evaluation_calibration_methods,
         "alpha": args.alpha,
         "skip_training": args.skip_training,
         "source_summary_paths": source_summary_paths,
@@ -563,6 +567,8 @@ def main() -> None:
         started_at=started_at,
         finished_at=finished_at,
         campaign_dir=str(campaign_dir),
+        evaluation_model_variants=evaluation_model_variants,
+        evaluation_calibration_methods=evaluation_calibration_methods,
     )
     history = append_campaign_to_history(history, entry)
     history_paths = save_campaign_artifacts(history, data_dir=data_dir)
@@ -595,12 +601,15 @@ def main() -> None:
     print(f"\n=== Read first ===")
     gov_path = governance_paths.get("governance_report.md")
     if gov_path:
-        print(f"  Governance report: {gov_path}")
+        print(f"  Governance report:     {gov_path}")
+    comp_path = governance_paths.get("comparability_report.md")
+    if comp_path:
+        print(f"  Comparability report:  {comp_path}")
     diff_path = history_paths.get("campaign_diff_report.md")
     if diff_path:
-        print(f"  Diff report:       {diff_path}")
-    print(f"  Evidence pack:     {campaign_dir / 'cross_loto_report.md'}")
-    print(f"  History:           {history_paths.get('campaign_history.json')}")
+        print(f"  Diff report:           {diff_path}")
+    print(f"  Evidence pack:         {campaign_dir / 'cross_loto_report.md'}")
+    print(f"  History:               {history_paths.get('campaign_history.json')}")
     print()
 
 

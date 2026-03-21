@@ -430,14 +430,49 @@ campaign 実行後に自動生成される 4 種類のシグナル集約 artifac
 | artifact | 形式 | 内容 |
 |----------|------|------|
 | `data/governance_report.md` | Markdown | 全 governance シグナルを統合した運用レポート（最優先） |
-| `data/trend_summary.json` | JSON | 直近 N campaign の傾向（rank 推移・logloss・pairwise） |
+| `data/comparability_report.json` | JSON | campaign 間の比較可能性判定結果（benchmark・loto・variant 照合） |
+| `data/comparability_report.md` | Markdown | comparability_report の人が読める版 |
+| `data/trend_summary.json` | JSON | 直近 N campaign の傾向（rank 推移・logloss・pairwise）+比較可能性メモ |
 | `data/trend_summary.md` | Markdown | trend_summary の人が読める版 |
-| `data/regression_alert.json` | JSON | 最新 campaign と過去比較の悪化シグナル |
+| `data/regression_alert.json` | JSON | 最新 campaign と過去比較の悪化シグナル+比較可能性 caution |
 | `data/regression_alert.md` | Markdown | regression_alert の人が読める版 |
-| `data/promotion_gate.json` | JSON | 昇格検討フェーズに進んでよいかの gate 判定 |
+| `data/promotion_gate.json` | JSON | 昇格検討フェーズに進んでよいかの gate 判定（比較可能性条件含む） |
 | `data/promotion_gate.md` | Markdown | promotion_gate の人が読める版 |
 
+### benchmark registry と comparability の役割
+
+`benchmark_registry.py` は各 campaign profile が満たすべき仕様を定義する:
+- `archcomp`: 全 loto_types (3種)、3 seeds 以上、4 variant、3 calibration method
+- `archcomp_full`: 全 loto_types (3種)、5 seeds 以上（archcomp と互換扱い）
+- `archcomp_lite`: loto6 のみ、2 seeds（archcomp とは **非互換**）
+
+2 campaign が比較可能（comparable）である条件:
+1. **benchmark 互換** — 同一 benchmark または compatible_benchmarks に列挙されたペア
+2. **loto_types 一致** — 同一の loto_type セット（hard check）
+3. **variant セット一致** — evaluation_model_variants が同じ（hard check）
+4. **calibration methods 一致** — evaluation_calibration_methods が同じ（hard check）
+5. **seed count 十分** — benchmark minimum 以上（hard check）
+6. **data fingerprint 一致** — 利用可能な場合に確認（warning のみ）
+
+hard check 失敗 → `comparable=False`、severity=error
+warning のみ → `comparable=True`、severity=warning
+
+### comparability report の読み方
+
+`data/comparability_report.md` の Overall Status を確認する。
+
+| status | 意味 | 対処 |
+|--------|------|------|
+| ✅ COMPARABLE | 全 campaign ペアが比較可能 | trend/regression をそのまま信頼してよい |
+| ⚠️ COMPARABLE WITH WARNINGS | 比較可能だが注意点あり | warning を読んで caution 付きで解釈 |
+| ❌ NOT COMPARABLE | 比較不能なペアあり | trend/regression 結論を保留、条件を揃えて再実行 |
+
+`pairs` 節に連続する campaign ペアごとの判定が入る。
+`failed_checks` が hard failure、`warnings` が soft mismatches。
+
 ### trend_summary の読み方
+
+**事前確認**: `comparability_report.md` で overall_severity を確認する。error の場合、以下のトレンド解釈は保留すること。
 
 `data/trend_summary.md` を読む（`data/trend_summary.json` の人が読める版）。
 
@@ -449,6 +484,9 @@ campaign 実行後に自動生成される 4 種類のシグナル集約 artifac
 - `pairwise_signal_history` — settransformer_vs_deepsets の both_pass_rate が上昇していれば attention 効果が強まっている
 
 ### regression_alert の読み方
+
+**事前確認**: `comparability_note` フィールドと `comparability_caution` フラグを確認する。
+`comparability_caution=true` の場合、alert は「条件が揃っていない比較」を反映している可能性がある。
 
 `data/regression_alert.md` の Alert Level を確認する。
 
@@ -462,6 +500,8 @@ campaign 実行後に自動生成される 4 種類のシグナル集約 artifac
 `suspected_causes` に自動生成されたヒューリスティック解釈が入る。
 
 ### promotion_gate の読み方
+
+**注意**: promotion_gate には `comparability_ok` 条件が含まれる。campaign 間の比較可能性問題がある場合、gate は自動的に green にならない（comparability_error が blockers に追加される）。
 
 `data/promotion_gate.md` で gate_status を確認する。
 

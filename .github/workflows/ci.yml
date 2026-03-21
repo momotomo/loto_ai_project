@@ -182,9 +182,63 @@ jobs:
           assert '## Promotion Readiness Gate' in gov_md
           with tempfile.TemporaryDirectory() as d:
               paths = save_governance_artifacts(history, stability, data_dir=d)
-              expected = ['trend_summary.json', 'trend_summary.md', 'regression_alert.json', 'regression_alert.md', 'promotion_gate.json', 'promotion_gate.md', 'governance_report.md']
+              expected = ['trend_summary.json', 'trend_summary.md', 'regression_alert.json', 'regression_alert.md', 'promotion_gate.json', 'promotion_gate.md', 'governance_report.md', 'comparability_report.json', 'comparability_report.md']
               for name in expected:
                   assert name in paths, f'Missing: {name}'
                   assert pathlib.Path(paths[name]).exists(), f'File missing: {name}'
           print('governance artifact generation OK')
+          "
+
+      - name: Verify benchmark_registry module imports cleanly
+        run: python -c "from benchmark_registry import BENCHMARK_DEFINITIONS, BENCHMARK_REGISTRY_SCHEMA_VERSION, VALID_BENCHMARK_NAMES, resolve_benchmark_for_profile, get_benchmark, benchmarks_are_compatible; assert 'archcomp' in BENCHMARK_DEFINITIONS; assert 'archcomp_lite' in BENCHMARK_DEFINITIONS; assert 'archcomp_full' in BENCHMARK_DEFINITIONS; print('benchmark_registry OK, benchmarks=', VALID_BENCHMARK_NAMES)"
+
+      - name: Verify comparability_checker module imports cleanly
+        run: python -c "from comparability_checker import check_pair_comparability, check_history_comparability, save_comparability_artifacts, COMPARABILITY_SCHEMA_VERSION; print('comparability_checker OK, schema_version=', COMPARABILITY_SCHEMA_VERSION)"
+
+      - name: Smoke benchmark registry resolution
+        run: |
+          python -c "
+          from benchmark_registry import resolve_benchmark_for_profile, get_benchmark, benchmarks_are_compatible, validate_campaign_against_benchmark
+          assert resolve_benchmark_for_profile('archcomp') == 'archcomp'
+          assert resolve_benchmark_for_profile('archcomp_lite') == 'archcomp_lite'
+          assert resolve_benchmark_for_profile('archcomp_full') == 'archcomp_full'
+          assert resolve_benchmark_for_profile('unknown_profile') == 'unknown_profile'
+          assert benchmarks_are_compatible('archcomp', 'archcomp')
+          assert benchmarks_are_compatible('archcomp', 'archcomp_full')
+          assert benchmarks_are_compatible('archcomp_full', 'archcomp')
+          assert not benchmarks_are_compatible('archcomp_lite', 'archcomp')
+          b = get_benchmark('archcomp')
+          assert b['min_seed_count'] == 3
+          assert b['expected_loto_types'] == ['loto6', 'loto7', 'miniloto']
+          print('benchmark registry resolution OK')
+          "
+
+      - name: Smoke comparability artifact generation
+        run: |
+          python -c "
+          import json, tempfile, pathlib
+          from cross_loto_summary import build_cross_loto_summary, build_recommendation
+          from campaign_manager import build_campaign_entry, append_campaign_to_history
+          from comparability_checker import check_pair_comparability, check_history_comparability, save_comparability_artifacts, build_comparability_report_md
+          per_loto = {'loto6': {'schema_version': 1, 'loto_type': 'loto6', 'preset': 'archcomp', 'seeds': [42, 123, 456], 'run_count': 3, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 3, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3, 0.3, 0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04, 0.04, 0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01, 0.01, 0.01]}, 'calibration_recommendations': {'none': 3}, 'promote_count': 0, 'hold_count': 3}}, 'pairwise_comparisons': {}}}
+          cs = build_cross_loto_summary(per_loto, ['loto6'], 'archcomp', [42, 123, 456])
+          rec = build_recommendation(cs)
+          e1 = build_campaign_entry('c1', 'archcomp', cs, rec, evaluation_model_variants='legacy,multihot,deepsets,settransformer', evaluation_calibration_methods='none,temperature,isotonic')
+          e2 = build_campaign_entry('c2', 'archcomp', cs, rec, evaluation_model_variants='legacy,multihot,deepsets,settransformer', evaluation_calibration_methods='none,temperature,isotonic')
+          assert e1['benchmark_name'] == 'archcomp', f'expected archcomp, got {e1[\"benchmark_name\"]}'
+          pair = check_pair_comparability(e1, e2)
+          assert 'comparable' in pair and 'severity' in pair and 'failed_checks' in pair
+          history = append_campaign_to_history([], e1)
+          history = append_campaign_to_history(history, e2)
+          hist_result = check_history_comparability(history)
+          assert 'overall_comparable' in hist_result
+          md = build_comparability_report_md(hist_result)
+          assert '# Comparability Report' in md
+          with tempfile.TemporaryDirectory() as d:
+              paths = save_comparability_artifacts(history, data_dir=d)
+              assert 'comparability_report.json' in paths
+              assert 'comparability_report.md' in paths
+              data = json.loads(pathlib.Path(paths['comparability_report.json']).read_text())
+              assert 'overall_comparable' in data
+          print('comparability artifact generation OK')
           "
