@@ -110,6 +110,16 @@ PRESET_CONFIGS = {
         "batch_size": 32,
         "patience": 1,
     },
+    # Architecture comparison preset: enough training to distinguish deepsets vs settransformer
+    # while staying within Kaggle free-tier runtimes.
+    # Intended use: multi-seed comparison with run_multi_seed.py, not for production saves.
+    "archcomp": {
+        "walk_forward_folds": 3,
+        "eval_epochs": 6,
+        "final_epochs": 8,
+        "batch_size": 32,
+        "patience": 3,
+    },
 }
 
 os.makedirs(DATA_DIR, exist_ok=True)

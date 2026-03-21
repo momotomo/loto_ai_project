@@ -30,6 +30,9 @@ DEFAULT_EXPERIMENT_CONFIG = {
     "patience": None,
 }
 
+# Valid preset names (kept in sync with train_prob_model.PRESET_CONFIGS)
+VALID_PRESET_NAMES = ("default", "fast", "smoke", "archcomp")
+
 TRACKED_SOURCE_FILES = [
     "AGENT.md",
     "README.md",
@@ -40,6 +43,7 @@ TRACKED_SOURCE_FILES = [
     "requirements.lock",
     "artifact_utils.py",
     "calibration_utils.py",
+    "comparison_summary.py",
     "evaluation_statistics.py",
     "config.py",
     "data_collector.py",

@@ -72,6 +72,16 @@
 - online baseline は test 実測を使うが、予測後にのみ状態更新する。
 
 ## preset の使い分け
+
+| preset | 目的 | eval_epochs | walk_forward_folds | 備考 |
+|--------|------|-------------|-------------------|------|
+| `smoke` | 配線・artifact 確認 | 0 | 1 | 0-epoch なので logloss 差は無意味 |
+| `fast` | 素早い動作確認 | 4 | 3 | CI / 手元 sanity check 向け |
+| `default` | 通常運用 | 8 | 5 | Kaggle 無料枠で実行可能 |
+| `archcomp` | deepsets vs settransformer 比較専用 | 6 | 3 | 多 seed 比較と summary 生成に使う |
+
+### コマンド例
+
 - 通常: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer`
 - calibration 比較つき: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic`
 - 短時間確認: `venv/bin/python train_prob_model.py --loto_type loto6 --preset fast`
@@ -82,10 +92,82 @@
 - 評価だけ更新したい場合: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --skip_final_train`
 - 実験追跡込み: `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"deepsets","evaluation_model_variants":"legacy,multihot,deepsets,settransformer","refresh_data":false,"skip_final_train":true}'`
 
+## architecture comparison preset (archcomp) と多 seed 比較
+
+### archcomp preset の役割
+- smoke preset は 0-epoch のため、deepsets と settransformer の architecture 差が現れない。
+- `archcomp` preset (eval_epochs=6, walk_forward_folds=3, patience=3) はある程度学習させた上で両者を比較するための専用設定。
+- production 保存を変えない運用（`--skip_final_train`）と組み合わせて使う。
+
+### 多 seed 比較の実行
+
+```bash
+# 3 seeds で deepsets と settransformer を比較し summary を生成する
+venv/bin/python scripts/run_multi_seed.py \
+    --loto_type loto6 \
+    --preset archcomp \
+    --seeds 42,123,456 \
+    --model_variant legacy \
+    --evaluation_model_variants legacy,multihot,deepsets,settransformer \
+    --saved_calibration_method none \
+    --evaluation_calibration_methods none,temperature,isotonic \
+    --run_root runs
+```
+
+各 seed の結果は `runs/` 以下に個別ディレクトリとして保存され、
+集計サマリが `data/comparison_summary_loto6.json` に書き出される。
+
+### comparison summary artifact の読み方
+
+`data/comparison_summary_{loto_type}.json` に以下が含まれる:
+
+```json
+{
+  "schema_version": 1,
+  "loto_type": "loto6",
+  "preset": "archcomp",
+  "seeds": [42, 123, 456],
+  "run_count": 3,
+  "variants": {
+    "deepsets": {
+      "run_count": 3,
+      "logloss": { "mean": 0.123, "std": 0.005, "values": [...] },
+      "brier":   { "mean": 0.045, "std": 0.002, "values": [...] },
+      "ece":     { "mean": 0.012, "std": 0.003, "values": [...] },
+      "calibration_recommendations": { "none": 2, "temperature": 1 },
+      "promote_count": 0,
+      "hold_count": 3
+    },
+    ...
+  },
+  "pairwise_comparisons": {
+    "settransformer_vs_deepsets": {
+      "run_count": 3,
+      "ci_wins": 1,           // runs where bootstrap_ci.upper < 0
+      "permutation_wins": 2,  // runs where permutation_test.p_value < alpha
+      "both_pass_count": 0    // runs where both pass simultaneously
+    },
+    ...
+  }
+}
+```
+
+### 判断の読み方
+
+1. `variants.<name>.logloss.mean / std` で各 variant の性能と安定性を確認する。
+2. `pairwise_comparisons.settransformer_vs_deepsets` を見る:
+   - `both_pass_count >= 2/3` → settransformer が consistently better な証拠
+   - `ci_wins = 0` かつ `permutation_wins = 0` → smoke と同様、hold が妥当
+   - `ci_wins + permutation_wins` のどちらかだけ多い → 傾向あり、追加 seed や default preset での確認を推奨
+3. `variants.<name>.promote_count` が各 seed でどれだけ promotion guardrail を通過したかを示す。
+4. 「smoke では hold でも archcomp ではどうか」を比較することが、ISAB や PMA 等の次の variant 追加判断の基礎となる。
+
 ## settransformer vs deepsets 比較の読み方
 - smoke では 0-epoch のため logloss 差は無意味。統計的優位の判定も hold になるのが通常。
-- より安定した比較には `preset fast` または `preset default` で `evaluation_model_variants legacy,deepsets,settransformer` を指定し、`settransformer_vs_deepsets` の `bootstrap_ci.upper` と `permutation_test.p_value` を確認する。
+- より安定した比較には `archcomp` または `fast` / `default` preset を使い `evaluation_model_variants legacy,deepsets,settransformer` を指定し、`settransformer_vs_deepsets` の `bootstrap_ci.upper` と `permutation_test.p_value` を確認する。
+- 多 seed で確認する場合は `scripts/run_multi_seed.py` を使い、`comparison_summary` の `pairwise_comparisons.settransformer_vs_deepsets` を読む。
 - `input_summary.pooling` が `mean` (deepsets) vs `mean_after_attention` (settransformer) で、それ以外の構造は同一。純粋な attention 有無の効果が分離できる設計。
+- 次の候補 (PMA / ISAB) を追加する前に、まずこの比較 summary を確認し deepsets と settransformer のどちらが基準として優れているかを把握することを推奨する。
 
 ## 再現性メモ
 - `eval_report_*.json` と `manifest_*.json` には `data_fingerprint` / `training_context` / `runtime_environment` を保存する。
