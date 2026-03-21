@@ -395,7 +395,7 @@ python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile arc
 
 ### recommendation stability の読み方
 
-`data/campaign_history.json` の `recommendation_stability` には以下が含まれる:
+`data/campaign_history.json` の `recommendation_stability` には以下が含まれる（新フィールドを含む）:
 
 ```json
 {
@@ -404,14 +404,75 @@ python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile arc
   "consecutive_same_action": 3,
   "consecutive_same_challenger": 4,
   "consecutive_keep_production": 4,
-  "consecutive_run_more_seeds": 3
+  "consecutive_run_more_seeds": 3,
+  "consecutive_positive_signal_for_settransformer": 2,
+  "consecutive_positive_signal_for_deepsets": 1
 }
 ```
 
 - `consecutive_same_action >= 3` かつ `run_more_seeds` → `archcomp_full` を実行して seed 数を増やす
 - `consecutive_same_action >= 2` かつ `consider_promotion` → 慎重に promotion を検討する
 - `consecutive_same_action >= 3` かつ `hold` → architecture 差が現れない可能性が高い
-- `campaign_diff_report.md` にも stability guidance が記載される
+- `consecutive_positive_signal_for_settransformer >= 2` → PMA/ISAB 探索の動機が揃った
+- `consecutive_positive_signal_for_deepsets >= 2` → deepsets が legacy に対して継続的に優位
+
+## governance layer の運用
+
+### governance artifact とは
+
+campaign 実行後に自動生成される 4 種類のシグナル集約 artifact。
+`scripts/run_campaign.py` 実行時に自動生成される（`data/` 以下に保存）。
+
+**まず `data/governance_report.md` を読む** — 他の artifact より最優先。
+
+### governance artifact 一覧
+
+| artifact | 形式 | 内容 |
+|----------|------|------|
+| `data/governance_report.md` | Markdown | 全 governance シグナルを統合した運用レポート（最優先） |
+| `data/trend_summary.json` | JSON | 直近 N campaign の傾向（rank 推移・logloss・pairwise） |
+| `data/trend_summary.md` | Markdown | trend_summary の人が読める版 |
+| `data/regression_alert.json` | JSON | 最新 campaign と過去比較の悪化シグナル |
+| `data/regression_alert.md` | Markdown | regression_alert の人が読める版 |
+| `data/promotion_gate.json` | JSON | 昇格検討フェーズに進んでよいかの gate 判定 |
+| `data/promotion_gate.md` | Markdown | promotion_gate の人が読める版 |
+
+### trend_summary の読み方
+
+`data/trend_summary.md` を読む（`data/trend_summary.json` の人が読める版）。
+
+主な確認ポイント:
+- `variant_rank_history.<variant>.rank_trend` — "improving" / "worsening" / "stable" / "insufficient_data"
+- `metric_trends.<variant>.logloss.trend` — logloss が増えていれば "worsening"（低いほど良い）
+- `recommendation_history` — 直近 N campaign の action の流れ
+- `dominant_action` — window 内で最多の recommended_next_action
+- `pairwise_signal_history` — settransformer_vs_deepsets の both_pass_rate が上昇していれば attention 効果が強まっている
+
+### regression_alert の読み方
+
+`data/regression_alert.md` の Alert Level を確認する。
+
+| alert_level | 意味 | 対処 |
+|-------------|------|------|
+| ✅ none | 有意な悪化なし | 監視継続 |
+| ⚠️ low | 軽微な悪化シグナル 1 件 | 傾向確認、次 campaign で様子見 |
+| 🔶 medium | 複数シグナルまたは明確な悪化 | promotion 前に調査必須 |
+| 🔴 high | 重大な悪化（複数指標同時悪化 or recommendation 逆転） | promotion 禁止、原因調査 |
+
+`suspected_causes` に自動生成されたヒューリスティック解釈が入る。
+
+### promotion_gate の読み方
+
+`data/promotion_gate.md` で gate_status を確認する。
+
+| gate_status | 意味 | 次のアクション |
+|-------------|------|---------------|
+| 🟢 green | 昇格検討フェーズに進んでよい | per-loto 詳細レビュー後に production 学習 |
+| 🟡 yellow | 一部条件クリア、追加証拠推奨 | blockers を解消して再 campaign |
+| 🔴 red | 条件不足または悪化あり | campaign を続けて証拠を積む |
+
+`conditions_passed` と `blockers` に個別条件が列挙される。
+gate が green でも production は自動変更されない — 手動レビュー後に明示的に学習すること。
 
 ### 何回続いたら PMA / ISAB / HPO に進むか
 

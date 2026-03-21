@@ -130,6 +130,50 @@
   - comparison summary は `data/comparison_summary_{loto_type}.json` に上書きされる。
   - 次の variant (PMA / ISAB) を追加する前に、まずこの比較を実施することを推奨する。
 
+## governance report を最初に読んで判断したい
+
+- 症状: campaign 実行後にどのファイルを読めばよいか分からない。傾向・悪化・昇格準備度を一枚でまとめて知りたい。
+- 対処:
+  1. **まず `data/governance_report.md` を読む**（他の artifact より優先）:
+     ```
+     data/governance_report.md
+     ```
+     - Current recommendation（latest campaign の推奨）
+     - Promotion Readiness Gate（🟢/🟡/🔴）
+     - Regression Alert（✅/⚠️/🔶/🔴）
+     - Recommendation Stability（連続カウント）
+     - Recent Trend Overview（variant rank/logloss の傾向）
+     - Production Status（変えてよい理由 / 変えない理由）
+     - PMA / ISAB / HPO Guidance（次に進むべきか）
+  2. 詳細が必要なら順番に読む:
+     - `data/trend_summary.md` — 直近 N campaign の傾向（rank 推移・logloss 推移・pairwise 推移）
+     - `data/regression_alert.md` — 悪化シグナルの詳細
+     - `data/promotion_gate.md` — 昇格検討 gate の条件詳細
+     - `data/campaign_diff_report.md` — 前回比較からの変化
+     - `campaigns/<name>/cross_loto_report.md` — 詳細 evidence pack
+
+- artifact の読み順:
+  ```
+  1. data/governance_report.md     ← まずここを読む
+  2. data/trend_summary.md         ← 傾向が見たいとき
+  3. data/regression_alert.md      ← 悪化シグナルの詳細
+  4. data/promotion_gate.md        ← 昇格 gate 条件の詳細
+  5. data/campaign_diff_report.md  ← 前回との差分
+  6. campaigns/<name>/cross_loto_report.md  ← evidence pack
+  ```
+
+- gate status の解釈:
+  | gate | 意味 | 次のアクション |
+  |------|------|---------------|
+  | 🟢 green | 昇格検討フェーズに進んでよい | per-loto 詳細レビュー → 手動確認後に production 学習 |
+  | 🟡 yellow | 条件が一部満たされているが不足あり | archcomp / archcomp_full を追加実行、blockers を解消 |
+  | 🔴 red | 証拠不足 or 悪化あり | campaign を続け証拠を積む、regression を調査する |
+
+- 注意:
+  - gate が green でも production は自動変更されない
+  - gate は「昇格検討に進んでよいか」であり「昇格してよい」ではない
+  - 手動レビュー後に `python train_prob_model.py` で本番学習を行うこと
+
 ## campaign を使って比較を継続監視したい
 
 - 症状: 比較を 1 回で終わらせず、前回との差分と傾向の変化を追いたい。
@@ -148,13 +192,19 @@
      # run_more_seeds が ≥3 回続く場合は archcomp_full
      python scripts/run_campaign.py --campaign_name 2026-03-21_full --profile archcomp_full
      ```
-  2. **まず diff report を読む**（前回からの変化）:
+  2. **まず governance report を読む**（campaign 実行後の総合判断に使う）:
+     - `data/governance_report.md` — 全 governance シグナルをまとめた運用レポート（**最優先で読む**）
+  3. 詳細が必要なら個別 artifact を読む:
      - `data/campaign_diff_report.md` — variant ranking / pairwise 変化・recommendation 変化
-  3. campaign history で stability を確認する:
+     - `data/trend_summary.md` — 直近 N campaign の傾向（rank・logloss・pairwise 推移）
+     - `data/regression_alert.md` — 悪化シグナルの詳細（alert_level: none/low/medium/high）
+     - `data/promotion_gate.md` — 昇格検討 gate の条件詳細（gate_status: red/yellow/green）
+  4. campaign history で stability を確認する:
      - `data/campaign_history.json` → `recommendation_stability` を参照
      - `consecutive_same_action >= 3` かつ `run_more_seeds` → `archcomp_full` を実行
-     - `consecutive_same_action >= 2` かつ `consider_promotion` → promotion を慎重に検討
-  4. 今回 campaign の evidence pack を読む:
+     - `consecutive_same_action >= 2` かつ `consider_promotion` → promotion 慎重検討
+     - `consecutive_positive_signal_for_settransformer >= 2` → PMA/ISAB 検討フェーズへ
+  5. 今回 campaign の evidence pack を読む:
      - `campaigns/<campaign_name>/cross_loto_report.md` — 詳細 evidence pack
      - `campaigns/<campaign_name>/recommendation.json` — next_action
 
