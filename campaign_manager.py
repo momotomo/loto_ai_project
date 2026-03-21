@@ -76,6 +76,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_registry import resolve_benchmark_for_profile
+from decision_policy import check_campaign_acceptance
 
 CAMPAIGN_HISTORY_SCHEMA_VERSION = 1
 CAMPAIGN_DIFF_REPORT_SCHEMA_VERSION = 1
@@ -134,7 +135,7 @@ def build_campaign_entry(
 
     evidence = recommendation.get("evidence_summary") or {}
 
-    return {
+    entry: dict[str, Any] = {
         "campaign_name": campaign_name,
         "profile_name": profile_name,
         "benchmark_name": resolve_benchmark_for_profile(profile_name),
@@ -159,6 +160,16 @@ def build_campaign_entry(
         "key_pairwise_signals": key_pairwise_signals,
     }
 
+    # Decision policy acceptance fields
+    # comparability_ok is not yet known at entry-build time (requires history);
+    # callers may update it later. Default: None = unknown.
+    acceptance = check_campaign_acceptance(entry, comparability_ok=None)
+    entry["accepted_for_decision_use"] = acceptance["accepted_for_decision_use"]
+    entry["counts_toward_promotion_readiness"] = acceptance["counts_toward_promotion_readiness"]
+    entry["decision_benchmark_name"] = acceptance["decision_benchmark_name"]
+
+    return entry
+
 
 # ---------------------------------------------------------------------------
 # Recommendation stability
@@ -175,6 +186,7 @@ def compute_recommendation_stability(history: list[dict[str, Any]]) -> dict[str,
     if not history:
         return {
             "total_campaigns": 0,
+            "total_accepted_campaigns": 0,
             "latest_action": None,
             "latest_challenger": None,
             "consecutive_same_action": 0,
@@ -183,6 +195,8 @@ def compute_recommendation_stability(history: list[dict[str, Any]]) -> dict[str,
             "consecutive_run_more_seeds": 0,
             "consecutive_positive_signal_for_settransformer": 0,
             "consecutive_positive_signal_for_deepsets": 0,
+            "consecutive_same_action_accepted_only": 0,
+            "consecutive_positive_signal_for_settransformer_accepted_only": 0,
         }
 
     last_action = history[-1].get("recommended_next_action")
@@ -222,8 +236,30 @@ def compute_recommendation_stability(history: list[dict[str, Any]]) -> dict[str,
         else:
             break
 
+    # Accepted-only stability: count only accepted campaigns
+    accepted_history = [e for e in history if e.get("accepted_for_decision_use", False)]
+    n_accepted = len(accepted_history)
+
+    consecutive_same_action_accepted_only = 0
+    consecutive_positive_signal_for_settransformer_accepted_only = 0
+
+    if accepted_history:
+        last_action_accepted = accepted_history[-1].get("recommended_next_action")
+        for entry in reversed(accepted_history):
+            if entry.get("recommended_next_action") == last_action_accepted:
+                consecutive_same_action_accepted_only += 1
+            else:
+                break
+
+        for entry in reversed(accepted_history):
+            if entry.get("whether_to_try_pma_or_isab_next", False):
+                consecutive_positive_signal_for_settransformer_accepted_only += 1
+            else:
+                break
+
     return {
         "total_campaigns": len(history),
+        "total_accepted_campaigns": n_accepted,
         "latest_action": last_action,
         "latest_challenger": last_challenger,
         "consecutive_same_action": consecutive_same_action,
@@ -232,6 +268,9 @@ def compute_recommendation_stability(history: list[dict[str, Any]]) -> dict[str,
         "consecutive_run_more_seeds": consecutive_run_more_seeds,
         "consecutive_positive_signal_for_settransformer": consecutive_positive_signal_for_settransformer,
         "consecutive_positive_signal_for_deepsets": consecutive_positive_signal_for_deepsets,
+        # Accepted-only variants (use these for promotion readiness decisions)
+        "consecutive_same_action_accepted_only": consecutive_same_action_accepted_only,
+        "consecutive_positive_signal_for_settransformer_accepted_only": consecutive_positive_signal_for_settransformer_accepted_only,
     }
 
 
@@ -291,6 +330,9 @@ def build_campaign_history_csv(history: list[dict[str, Any]]) -> str:
     fieldnames = [
         "campaign_name",
         "profile_name",
+        "decision_benchmark_name",
+        "accepted_for_decision_use",
+        "counts_toward_promotion_readiness",
         "generated_at",
         "loto_types",
         "preset",
@@ -309,6 +351,9 @@ def build_campaign_history_csv(history: list[dict[str, Any]]) -> str:
         writer.writerow({
             "campaign_name": entry.get("campaign_name") or "",
             "profile_name": entry.get("profile_name") or "",
+            "decision_benchmark_name": entry.get("decision_benchmark_name") or entry.get("benchmark_name") or "",
+            "accepted_for_decision_use": "true" if entry.get("accepted_for_decision_use") else "false",
+            "counts_toward_promotion_readiness": "true" if entry.get("counts_toward_promotion_readiness") else "false",
             "generated_at": entry.get("generated_at") or "",
             "loto_types": "|".join(entry.get("loto_types") or []),
             "preset": entry.get("preset") or "",

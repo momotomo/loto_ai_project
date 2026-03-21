@@ -138,7 +138,10 @@
      ```
      data/governance_report.md
      ```
-     - **Comparability**（⬅️ **最初に確認** — 比較の前提条件）
+     - **Decision Benchmark Policy**（⬅️ **まず確認** — 昇格判断に使える条件の要約）
+     - **Current Campaign Acceptance**（この campaign は昇格判断用か？ ✅/❌）
+     - **Whether This Campaign Counts Toward Promotion Readiness**（accepted-only 集計）
+     - **Comparability**（比較の前提条件 ✅/⚠️/❌）
      - Current recommendation（latest campaign の推奨）
      - Promotion Readiness Gate（🟢/🟡/🔴）
      - Regression Alert（✅/⚠️/🔶/🔴）
@@ -146,10 +149,15 @@
      - Recent Trend Overview（variant rank/logloss の傾向）
      - Production Status（変えてよい理由 / 変えない理由）
      - PMA / ISAB / HPO Guidance（次に進むべきか）
-  2. Comparability セクションで ❌ エラーがあれば、以降のシグナルを保留し原因を確認する:
+  2. **`data/campaign_acceptance.md` を読む**（この campaign が昇格判断に採用されるかの verdict）:
+     - `accepted_for_decision_use=false` の場合は trend/gate を昇格根拠にしてはならない
+     - 原因（archcomp_lite・loto_types 不足・comparability_ok=False など）を確認する
+     - `data/benchmark_lock.md` で必要条件を確認する
+  3. Comparability セクションで ❌ エラーがあれば、以降のシグナルを保留し原因を確認する:
      - `data/comparability_report.md` を読んで `failed_checks` を確認する
      - 原因（loto_types の不一致・variant セットの変更・benchmark 不一致など）を解消して再実行
-  3. 詳細が必要なら順番に読む:
+  4. 詳細が必要なら順番に読む:
+     - `data/benchmark_lock.md` — Decision Benchmark Policy の全定義
      - `data/comparability_report.md` — campaign 間の比較可能性詳細（benchmark・loto・variant 照合）
      - `data/trend_summary.md` — 直近 N campaign の傾向（rank 推移・logloss 推移・pairwise 推移）
      - `data/regression_alert.md` — 悪化シグナルの詳細
@@ -159,14 +167,22 @@
 
 - artifact の読み順:
   ```
-  1. data/governance_report.md        ← まずここを読む（comparability 含む）
-  2. data/comparability_report.md     ← 比較可能性の詳細（必要時）
-  3. data/trend_summary.md            ← 傾向が見たいとき
-  4. data/regression_alert.md         ← 悪化シグナルの詳細
-  5. data/promotion_gate.md           ← 昇格 gate 条件の詳細
-  6. data/campaign_diff_report.md     ← 前回との差分（comparability セクション付き）
-  7. campaigns/<name>/cross_loto_report.md  ← evidence pack
+  1. data/governance_report.md        ← まずここを読む（acceptance・comparability 含む）
+  2. data/campaign_acceptance.md      ← この campaign は昇格判断用か？
+  3. data/benchmark_lock.md           ← 昇格判断に使える条件の定義
+  4. data/comparability_report.md     ← 比較可能性の詳細（必要時）
+  5. data/trend_summary.md            ← 傾向が見たいとき
+  6. data/regression_alert.md         ← 悪化シグナルの詳細
+  7. data/promotion_gate.md           ← 昇格 gate 条件の詳細
+  8. data/campaign_diff_report.md     ← 前回との差分（comparability セクション付き）
+  9. campaigns/<name>/cross_loto_report.md  ← evidence pack
   ```
+
+- acceptance status の解釈:
+  | status | 意味 | 対処 |
+  |--------|------|------|
+  | ✅ ACCEPTED | 昇格判断の証拠として採用 | trend/gate の結論を昇格根拠にしてよい |
+  | ❌ NOT ACCEPTED | 昇格判断には使えない | sanity 参考のみ。archcomp/archcomp_full で再実行が必要 |
 
 - comparability status の解釈:
   | status | 意味 | 対処 |
@@ -185,6 +201,7 @@
 - 注意:
   - gate が green でも production は自動変更されない
   - gate は「昇格検討に進んでよいか」であり「昇格してよい」ではない
+  - **gate が green でも campaign が accepted でなければ昇格根拠にしてはならない**
   - 手動レビュー後に `python train_prob_model.py` で本番学習を行うこと
 
 ## campaign を使って比較を継続監視したい
@@ -207,28 +224,35 @@
      ```
   2. **まず governance report を読む**（campaign 実行後の総合判断に使う）:
      - `data/governance_report.md` — 全 governance シグナルをまとめた運用レポート（**最優先で読む**）
-     - governance report 内の **Comparability セクションを最初に確認する**（比較の前提条件）
+     - governance report 内の **Current Campaign Acceptance セクションを最初に確認する**（昇格判断用か）
+     - 続いて **Comparability セクション** を確認する（比較の前提条件）
   3. 詳細が必要なら個別 artifact を読む:
+     - `data/campaign_acceptance.md` — この campaign が昇格判断用として採用されるかの verdict
+     - `data/benchmark_lock.md` — 昇格判断に使える campaign の条件定義
      - `data/comparability_report.md` — campaign 間の比較可能性詳細（❌ の場合は必読）
      - `data/campaign_diff_report.md` — variant ranking / pairwise 変化・recommendation 変化（comparability セクション付き）
      - `data/trend_summary.md` — 直近 N campaign の傾向（rank・logloss・pairwise 推移）
      - `data/regression_alert.md` — 悪化シグナルの詳細（alert_level: none/low/medium/high）
      - `data/promotion_gate.md` — 昇格検討 gate の条件詳細（gate_status: red/yellow/green）
-  4. campaign history で stability を確認する:
+  4. campaign history で stability を確認する（**昇格判断には _accepted_only を使う**）:
      - `data/campaign_history.json` → `recommendation_stability` を参照
-     - `consecutive_same_action >= 3` かつ `run_more_seeds` → `archcomp_full` を実行
-     - `consecutive_same_action >= 2` かつ `consider_promotion` → promotion 慎重検討
-     - `consecutive_positive_signal_for_settransformer >= 2` → PMA/ISAB 検討フェーズへ
+     - `consecutive_same_action_accepted_only >= 2` かつ `consider_promotion` → promotion 慎重検討
+     - `consecutive_same_action_accepted_only >= 3` かつ `run_more_seeds` → `archcomp_full` を実行
+     - `consecutive_positive_signal_for_settransformer_accepted_only >= 2` → PMA/ISAB 検討フェーズへ
+     - `consecutive_same_action` (全体) は傾向把握のみ — 昇格根拠には使わない
   5. 今回 campaign の evidence pack を読む:
      - `campaigns/<campaign_name>/cross_loto_report.md` — 詳細 evidence pack
      - `campaigns/<campaign_name>/recommendation.json` — next_action
 
 - profile ごとの使い分け:
-  | profile | preset | seeds | loto_types | 用途 |
-  |---------|--------|-------|-----------|------|
-  | `archcomp_lite` | fast | 2 | loto6 のみ | sanity check のみ（決定に使わない） |
-  | `archcomp` | archcomp | 3 | 全 3 種 | 標準 campaign（既定） |
-  | `archcomp_full` | default | 5 | 全 3 種 | `run_more_seeds` が続く場合 |
+  | profile | preset | seeds | loto_types | 昇格判断 | 用途 |
+  |---------|--------|-------|-----------|---------|------|
+  | `archcomp_lite` | fast | 2 | loto6 のみ | **❌ 不可** | sanity check のみ（決定に使わない） |
+  | `archcomp` | archcomp | 3 | 全 3 種 | ✅ 可（accepted） | 標準 campaign（既定） |
+  | `archcomp_full` | default | 5 | 全 3 種 | ✅ 可（accepted） | `run_more_seeds` が続く場合 |
+
+  > `archcomp_lite` で comparable な signal が出ても、昇格判断の根拠にはならない。
+  > `accepted_for_decision_use=true` の campaign だけが promotion readiness に積み上がる。
 
 - メモ:
   - campaign 間の artifact は `campaigns/<name>/` に独立保存される（上書きなし）
