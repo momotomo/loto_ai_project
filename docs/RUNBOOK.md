@@ -130,6 +130,34 @@
   - comparison summary は `data/comparison_summary_{loto_type}.json` に上書きされる。
   - 次の variant (PMA / ISAB) を追加する前に、まずこの比較を実施することを推奨する。
 
+## 複数 loto_type を横断して variant を比較したい
+
+- 症状: loto6 だけで比較したが、miniloto / loto7 での傾向が不明。cross-loto で全体傾向を把握したい。
+- 対処:
+  1. `scripts/run_cross_loto.py` で全 loto_type 横断の比較を実行する:
+     ```bash
+     venv/bin/python scripts/run_cross_loto.py \
+         --loto_types loto6,loto7,miniloto \
+         --preset archcomp \
+         --seeds 42,123,456 \
+         --evaluation_model_variants legacy,multihot,deepsets,settransformer \
+         --run_root runs
+     ```
+  2. 生成された artifact を確認する:
+     - `data/comparison_summary_{loto_type}.json` — 各 loto_type の per-seed 集計
+     - `data/cross_loto_summary.json` — 横断 ranking / pairwise / promotion 傾向
+     - `data/recommendation.json` — 次に何をすべきかの推奨
+  3. `recommendation.recommended_next_action` を基本方針として次の実験を決める。
+  4. `recommendation.whether_to_try_pma_or_isab_next` が true なら PMA / ISAB の試験を検討する。
+- メモ:
+  - 既存の `comparison_summary_{loto_type}.json` から学習をスキップして集計だけやり直せる:
+    ```bash
+    venv/bin/python scripts/run_cross_loto.py --loto_types loto6,loto7,miniloto --skip_training
+    ```
+  - 各 loto_type の per-seed run は `runs/<run_id>/` に独立して残る。
+  - cross-loto summary は `data/cross_loto_summary.json` に上書きされる。
+  - 新しい variant を追加する前に必ずこの cross-loto summary を確認すること。
+
 ## GitHub Actions からの Kaggle kick 失敗
 - 症状: `.github/workflows/kaggle_kick.yml` が skip 以外で失敗する。
 - 確認:
