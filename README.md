@@ -44,24 +44,30 @@ python scripts/run_campaign.py --campaign_name 2026-03-21_full --profile archcom
 
 Campaign 出力:
 - `data/governance_report.md` — 全 governance シグナルをまとめた運用レポート（**最初に読む**）
-- `data/comparability_report.md` — campaign 間の比較可能性判定（**読む前に確認する前提条件**）
+- `data/campaign_acceptance.md` — **この campaign が昇格判断用として採用されるかの verdict**（governance に続いて読む）
+- `data/benchmark_lock.md` — 昇格判断に使える campaign の条件定義（decision benchmark policy）
+- `data/comparability_report.md` — campaign 間の比較可能性判定（trend・回帰判断の前提条件）
 - `data/trend_summary.md` — 直近 N campaign の傾向（rank・logloss・pairwise 推移）
 - `data/regression_alert.md` — 悪化シグナル（alert_level: none/low/medium/high）
 - `data/promotion_gate.md` — 昇格検討 gate（gate_status: red/yellow/green）
 - `data/campaign_diff_report.md` — 前回比較からの変化（comparability セクション含む）
-- `data/campaign_history.json` — 全 campaign 履歴 + recommendation stability
-- `data/campaign_history.csv` — 表計算用履歴
+- `data/campaign_history.json` — 全 campaign 履歴 + recommendation stability（accepted-only 集計含む）
+- `data/campaign_history.csv` — 表計算用履歴（accepted_for_decision_use 列含む）
 - `campaigns/<campaign_name>/cross_loto_report.md` — evidence pack（詳細確認用）
 
-**読む順序:** `data/governance_report.md` → `data/comparability_report.md` → `data/campaign_diff_report.md` → `campaigns/<name>/cross_loto_report.md`
+**読む順序:** `data/governance_report.md` → `data/campaign_acceptance.md` → `data/benchmark_lock.md` → `data/comparability_report.md` → `data/campaign_diff_report.md` → `campaigns/<name>/cross_loto_report.md`
 
 ### Campaign profile の違い
 
-| profile | preset | seeds | loto_types | 用途 |
-|---------|--------|-------|-----------|------|
-| `archcomp_lite` | fast | 2 | loto6 のみ | 軽量確認・sanity check |
-| `archcomp` | archcomp | 3 | 全 3 種 | 標準 campaign（既定） |
-| `archcomp_full` | default | 5 | 全 3 種 | run_more_seeds が続く場合の拡充 |
+| profile | preset | seeds | loto_types | 昇格判断使用可 | 用途 |
+|---------|--------|-------|-----------|--------------|------|
+| `archcomp_lite` | fast | 2 | loto6 のみ | **❌ 不可** (sanity のみ) | 軽量確認・sanity check |
+| `archcomp` | archcomp | 3 | 全 3 種 | ✅ 可（accepted） | 標準 campaign（既定） |
+| `archcomp_full` | default | 5 | 全 3 種 | ✅ 可（accepted） | run_more_seeds が続く場合の拡充 |
+
+> **注**: `archcomp_lite` は loto6 のみのため **昇格判断には使えません**。comparable=true であっても
+> `accepted_for_decision_use=false` になります。昇格判断は `archcomp` か `archcomp_full` の
+> accepted campaign のみで行ってください。
 
 ### cross-loto 横断比較 (ad-hoc)
 ```bash
@@ -109,7 +115,8 @@ python scripts/run_cross_loto.py --report_only
 - `campaign_manager.py` は campaign 履歴管理・推奨安定性集計（settransformer/deepsets シグナル streak 含む）・diff report 生成を担当する。campaign entry には benchmark_name / evaluation_model_variants / evaluation_calibration_methods も記録され、比較可能性判定に使われる。
 - `benchmark_registry.py` は archcomp_lite / archcomp / archcomp_full の benchmark 定義を管理する。benchmark は「同一条件での比較を保証する仕様セット」で、2 campaign が比較可能かどうかの基準になる。
 - `comparability_checker.py` は campaign 間の比較可能性を判定し `comparability_report.json` / `comparability_report.md` を生成する。benchmark・loto_types・variants・calibration・seeds・data fingerprint を照合し、hard failure（comparable=False）と warning（comparable-with-caveats）を区別する。
-- `governance_layer.py` は trend summary / regression alert / promotion gate / governance report の 4 artifact を生成する governance 層。campaign 実行後に自動呼び出され、comparability 情報も各 artifact に統合される。
+- `decision_policy.py` は **Decision Benchmark Policy**（昇格判断に使える campaign の条件）を定義・管理する。`benchmark_lock.json` / `benchmark_lock.md` でポリシーを固定し、`campaign_acceptance.json` / `campaign_acceptance.md` で各 campaign の採用可否を判定する。`archcomp_lite` は sanity のみで昇格判断不可。
+- `governance_layer.py` は trend summary / regression alert / promotion gate / governance report の 4 artifact を生成する governance 層。campaign 実行後に自動呼び出され、comparability・acceptance・decision policy 情報も各 artifact に統合される。governance_report.md には「この campaign は昇格判断用として採用されるか」の verdict が先頭近くに表示される。
 - `manifest_*.json` と `eval_report_*.json` には `data_fingerprint`、`training_context`、`runtime_environment` が入り、data hash / preprocessing version / seed / preset / model variant / calibration method / Python / dependency version を確認できます。
 - `smoke` preset は plumbing 確認用の 0-epoch 構成。`archcomp` preset は deepsets vs settransformer の architecture 比較専用 (eval_epochs=6, folds=3)。
 

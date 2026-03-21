@@ -47,6 +47,7 @@ TRACKED_SOURCE_FILES = [
     "campaign_manager.py",
     "benchmark_registry.py",
     "comparability_checker.py",
+    "decision_policy.py",
     "governance_layer.py",
     "comparison_summary.py",
     "cross_loto_summary.py",

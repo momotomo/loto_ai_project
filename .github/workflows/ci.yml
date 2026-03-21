@@ -152,6 +152,9 @@ jobs:
           s = compute_recommendation_stability([])
           assert 'consecutive_positive_signal_for_settransformer' in s, 'Missing settransformer key'
           assert 'consecutive_positive_signal_for_deepsets' in s, 'Missing deepsets key'
+          assert 'consecutive_same_action_accepted_only' in s, 'Missing accepted_only action key'
+          assert 'consecutive_positive_signal_for_settransformer_accepted_only' in s, 'Missing accepted_only st key'
+          assert 'total_accepted_campaigns' in s, 'Missing total_accepted_campaigns'
           print('stability extension OK:', list(s.keys()))
           "
 
@@ -182,11 +185,59 @@ jobs:
           assert '## Promotion Readiness Gate' in gov_md
           with tempfile.TemporaryDirectory() as d:
               paths = save_governance_artifacts(history, stability, data_dir=d)
-              expected = ['trend_summary.json', 'trend_summary.md', 'regression_alert.json', 'regression_alert.md', 'promotion_gate.json', 'promotion_gate.md', 'governance_report.md', 'comparability_report.json', 'comparability_report.md']
+              expected = ['trend_summary.json', 'trend_summary.md', 'regression_alert.json', 'regression_alert.md', 'promotion_gate.json', 'promotion_gate.md', 'governance_report.md', 'comparability_report.json', 'comparability_report.md', 'benchmark_lock.json', 'benchmark_lock.md', 'campaign_acceptance.json', 'campaign_acceptance.md']
               for name in expected:
                   assert name in paths, f'Missing: {name}'
                   assert pathlib.Path(paths[name]).exists(), f'File missing: {name}'
           print('governance artifact generation OK')
+          "
+
+      - name: Verify decision_policy module imports cleanly
+        run: python -c "from decision_policy import DECISION_BENCHMARK_POLICY, DECISION_POLICY_SCHEMA_VERSION, CAMPAIGN_ACCEPTANCE_SCHEMA_VERSION, build_benchmark_lock_artifact, check_campaign_acceptance, save_benchmark_lock_artifacts, save_campaign_acceptance_artifacts; assert 'archcomp' in DECISION_BENCHMARK_POLICY['active_decision_benchmarks']; assert 'archcomp_lite' in DECISION_BENCHMARK_POLICY['excluded_profiles']; print('decision_policy OK, schema_version=', DECISION_POLICY_SCHEMA_VERSION)"
+
+      - name: Smoke decision benchmark policy and acceptance
+        run: |
+          python -c "
+          import json, tempfile, pathlib
+          from decision_policy import build_benchmark_lock_artifact, build_benchmark_lock_md, check_campaign_acceptance, build_campaign_acceptance_md, save_benchmark_lock_artifacts, save_campaign_acceptance_artifacts, DECISION_BENCHMARK_POLICY
+          from cross_loto_summary import build_cross_loto_summary, build_recommendation
+          from campaign_manager import build_campaign_entry
+
+          # Test benchmark lock artifact
+          lock = build_benchmark_lock_artifact()
+          assert 'schema_version' in lock
+          assert 'active_decision_benchmarks' in lock
+          assert 'archcomp' in lock['active_decision_benchmarks']
+          assert 'archcomp_lite' in lock['excluded_profiles']
+          md = build_benchmark_lock_md(lock)
+          assert 'Decision Benchmark Policy' in md
+
+          # Test campaign acceptance for archcomp (should be accepted)
+          per_loto = {'loto6': {'schema_version': 1, 'loto_type': 'loto6', 'preset': 'archcomp', 'seeds': [42, 123, 456], 'run_count': 3, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 3, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3, 0.3, 0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04, 0.04, 0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01, 0.01, 0.01]}, 'calibration_recommendations': {'none': 3}, 'promote_count': 0, 'hold_count': 3}}, 'pairwise_comparisons': {}}, 'loto7': {'schema_version': 1, 'loto_type': 'loto7', 'preset': 'archcomp', 'seeds': [42, 123, 456], 'run_count': 3, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 3, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3, 0.3, 0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04, 0.04, 0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01, 0.01, 0.01]}, 'calibration_recommendations': {'none': 3}, 'promote_count': 0, 'hold_count': 3}}, 'pairwise_comparisons': {}}, 'miniloto': {'schema_version': 1, 'loto_type': 'miniloto', 'preset': 'archcomp', 'seeds': [42, 123, 456], 'run_count': 3, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 3, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3, 0.3, 0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04, 0.04, 0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01, 0.01, 0.01]}, 'calibration_recommendations': {'none': 3}, 'promote_count': 0, 'hold_count': 3}}, 'pairwise_comparisons': {}}}
+          cs = build_cross_loto_summary(per_loto, ['loto6', 'loto7', 'miniloto'], 'archcomp', [42, 123, 456])
+          rec = build_recommendation(cs)
+          entry = build_campaign_entry('ci_test', 'archcomp', cs, rec, evaluation_model_variants='legacy,multihot,deepsets,settransformer', evaluation_calibration_methods='none,temperature,isotonic')
+          result = check_campaign_acceptance(entry, comparability_ok=True)
+          assert result['accepted_for_decision_use'] is True, f'Expected accepted, got: {result}'
+          assert result['failed_requirements'] == []
+
+          # Test archcomp_lite rejection
+          per_loto_lite = {'loto6': per_loto['loto6']}
+          cs_lite = build_cross_loto_summary(per_loto_lite, ['loto6'], 'fast', [42, 123])
+          entry_lite = build_campaign_entry('ci_lite', 'archcomp_lite', cs_lite, rec, evaluation_model_variants='legacy,multihot,deepsets,settransformer', evaluation_calibration_methods='none,temperature,isotonic')
+          result_lite = check_campaign_acceptance(entry_lite, comparability_ok=True)
+          assert result_lite['accepted_for_decision_use'] is False, f'Expected not accepted, got: {result_lite}'
+
+          # Test save artifacts
+          with tempfile.TemporaryDirectory() as d:
+              lock_paths = save_benchmark_lock_artifacts(data_dir=d)
+              assert 'benchmark_lock.json' in lock_paths
+              assert 'benchmark_lock.md' in lock_paths
+              acc_paths = save_campaign_acceptance_artifacts(entry, data_dir=d, comparability_ok=True)
+              assert 'campaign_acceptance.json' in acc_paths
+              data = json.loads(pathlib.Path(acc_paths['campaign_acceptance.json']).read_text())
+              assert data['accepted_for_decision_use'] is True
+          print('decision policy and acceptance smoke OK')
           "
 
       - name: Verify benchmark_registry module imports cleanly

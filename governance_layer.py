@@ -41,6 +41,15 @@ from pathlib import Path
 from typing import Any
 
 from comparability_checker import check_history_comparability, save_comparability_artifacts
+from decision_policy import (
+    DECISION_BENCHMARK_POLICY,
+    build_benchmark_lock_md,
+    build_benchmark_lock_artifact,
+    check_campaign_acceptance,
+    build_campaign_acceptance_md,
+    save_benchmark_lock_artifacts,
+    save_campaign_acceptance_artifacts,
+)
 
 TREND_SUMMARY_SCHEMA_VERSION = 1
 REGRESSION_ALERT_SCHEMA_VERSION = 1
@@ -1066,13 +1075,15 @@ def build_governance_report(
     stability: dict[str, Any],
     latest_entry: dict[str, Any] | None = None,
     comparability_result: dict[str, Any] | None = None,
+    acceptance_result: dict[str, Any] | None = None,
 ) -> str:
     """Build a combined governance Markdown report for human operators.
 
     This is the first document to read after a campaign run.
     It provides a concise decision surface across all governance signals,
-    starting with comparability so the reader knows whether trend and
-    regression conclusions can be trusted.
+    starting with the decision benchmark policy so the reader knows whether
+    this campaign is accepted for decision use at all, followed by
+    comparability, and then trend/regression/promotion conclusions.
     """
     lines: list[str] = []
     lines.append("# Governance Report")
@@ -1087,17 +1098,134 @@ def build_governance_report(
 
     lines.append(
         "> **Reading order**: Start here. For details, see "
+        "`campaign_acceptance.md` → `benchmark_lock.md` → "
         "`comparability_report.md` → `trend_summary.md` → `regression_alert.md` → "
         "`promotion_gate.md` → `campaign_diff_report.md` → "
         "evidence pack in `campaigns/<name>/cross_loto_report.md`."
     )
     lines.append("")
 
+    # --- Decision Benchmark Policy summary ---
+    lines.append("## Decision Benchmark Policy")
+    lines.append("")
+    lines.append(
+        "> **Read this first**: Only campaigns that satisfy the Decision Benchmark Policy "
+        "are counted toward promotion readiness. "
+        "See `benchmark_lock.md` for the full policy."
+    )
+    lines.append("")
+    active_bms = DECISION_BENCHMARK_POLICY.get("active_decision_benchmarks") or []
+    excluded = DECISION_BENCHMARK_POLICY.get("excluded_profiles") or []
+    lines.append(f"- **Active decision benchmarks**: `{'`, `'.join(active_bms)}`")
+    lines.append(f"- **Excluded (sanity only)**: `{'`, `'.join(excluded)}`")
+    lines.append(
+        f"- **comparability_required**: "
+        f"`{DECISION_BENCHMARK_POLICY.get('comparability_required', True)}`"
+    )
+    lines.append("")
+
+    # --- Current Campaign Acceptance ---
+    lines.append("## Current Campaign Acceptance")
+    lines.append("")
+    if acceptance_result is not None:
+        acc_ok = acceptance_result.get("accepted_for_decision_use", False)
+        counts = acceptance_result.get("counts_toward_promotion_readiness", False)
+        acc_emoji = "✅" if acc_ok else "❌"
+        acc_label = "ACCEPTED" if acc_ok else "NOT ACCEPTED"
+        counts_emoji = "✅" if counts else "❌"
+        lines.append(f"**Status**: {acc_emoji} {acc_label}")
+        lines.append(
+            f"**Counts toward promotion readiness**: {counts_emoji} `{counts}`"
+        )
+        lines.append("")
+        lines.append(acceptance_result.get("rationale", ""))
+        lines.append("")
+        acc_failed = acceptance_result.get("failed_requirements") or []
+        acc_warnings = acceptance_result.get("warnings") or []
+        if acc_failed:
+            lines.append("Failed requirements:")
+            for f in acc_failed:
+                lines.append(f"  - ❌ {f}")
+            lines.append("")
+        if acc_warnings:
+            lines.append("Acceptance warnings:")
+            for w in acc_warnings:
+                lines.append(f"  - ⚠️ {w}")
+            lines.append("")
+        if not acc_ok:
+            lines.append(
+                "> ⚠️ **This campaign is excluded from promotion readiness counting.** "
+                "Trend analysis below is for reference only. "
+                "See `campaign_acceptance.md` and `benchmark_lock.md` for details."
+            )
+            lines.append("")
+    elif latest_entry is not None:
+        # Derive from entry fields
+        acc_ok = latest_entry.get("accepted_for_decision_use", False)
+        counts = latest_entry.get("counts_toward_promotion_readiness", False)
+        acc_emoji = "✅" if acc_ok else "❌"
+        acc_label = "ACCEPTED" if acc_ok else "NOT ACCEPTED"
+        counts_emoji = "✅" if counts else "❌"
+        lines.append(f"**Status**: {acc_emoji} {acc_label}")
+        lines.append(
+            f"**Counts toward promotion readiness**: {counts_emoji} `{counts}`"
+        )
+        lines.append("")
+        if not acc_ok:
+            lines.append(
+                "> ⚠️ **This campaign is excluded from promotion readiness counting.** "
+                "See `campaign_acceptance.md` for details."
+            )
+            lines.append("")
+    else:
+        lines.append("*Acceptance check not available — run with run_campaign.py to generate.*")
+        lines.append("")
+
+    # --- Accepted-only stability note ---
+    lines.append("## Whether This Campaign Counts Toward Promotion Readiness")
+    lines.append("")
+    n_accepted = stability.get("total_accepted_campaigns", 0)
+    consec_action_acc = stability.get("consecutive_same_action_accepted_only", 0)
+    consec_st_acc = stability.get("consecutive_positive_signal_for_settransformer_accepted_only", 0)
+    if acceptance_result is not None:
+        counts_val = acceptance_result.get("counts_toward_promotion_readiness", False)
+    elif latest_entry is not None:
+        counts_val = latest_entry.get("counts_toward_promotion_readiness", False)
+    else:
+        counts_val = False
+
+    if counts_val:
+        lines.append(
+            "> ✅ **This campaign counts.** "
+            "The accepted-only stability metrics below reflect this campaign."
+        )
+    else:
+        lines.append(
+            "> ❌ **This campaign does NOT count.** "
+            "Comparable campaigns with wrong benchmark/profile/coverage "
+            "do not contribute to promotion readiness. "
+            "Only `archcomp` and `archcomp_full` campaigns are counted."
+        )
+    lines.append("")
+    lines.append("| Accepted-Only Metric | Value |")
+    lines.append("|----------------------|-------|")
+    lines.append(f"| Total accepted campaigns | {n_accepted} |")
+    lines.append(f"| Consecutive same action (accepted only) | {consec_action_acc} |")
+    lines.append(f"| Consecutive settransformer signal (accepted only) | {consec_st_acc} |")
+    lines.append("")
+    if not counts_val:
+        lines.append(
+            "> ℹ️ **Note**: Even if this campaign is comparable, the promotion readiness "
+            "review requires accepted campaigns only. "
+            "Run `archcomp` or `archcomp_full` to accumulate accepted evidence."
+        )
+        lines.append("")
+
     # --- Comparability (read before drawing any trend/regression conclusions) ---
     lines.append("## Comparability")
     lines.append("")
     lines.append(
-        "> **Check this first**: trend and regression conclusions are only valid when "
+        "> **Check this before trends**: trend and regression conclusions are only valid when "
         "campaigns are comparable (same benchmark, loto coverage, variants, and calibration methods)."
     )
     lines.append("")
@@ -1348,13 +1476,35 @@ def save_governance_artifacts(
     paths: dict[str, str] = {}
     latest_entry = history[-1] if history else None
 
-    # 0. Comparability report (generated first; used by governance report)
+    # 0a. Benchmark lock artifacts (always regenerated)
+    lock_paths = save_benchmark_lock_artifacts(data_dir=data_dir)
+    paths.update(lock_paths)
+
+    # 0b. Comparability report (generated before governance; used by governance report)
     comp_paths = save_comparability_artifacts(history, data_dir=data_dir)
     paths.update(comp_paths)
     # Also keep the comparability result in memory for the governance report
     from comparability_checker import check_history_comparability as _check_compat
     window_for_comp = history[-window_size:] if len(history) > window_size else history
     comparability_result = _check_compat(window_for_comp)
+
+    # 0c. Campaign acceptance (for latest campaign)
+    acceptance_result: dict[str, Any] | None = None
+    if latest_entry is not None:
+        # Determine comparability_ok for the latest campaign pair
+        comp_ok_for_latest: bool | None = None
+        if len(history) >= 2:
+            from comparability_checker import check_pair_comparability as _check_pair
+            pair_result = _check_pair(history[-2], history[-1])
+            comp_ok_for_latest = pair_result.get("comparable", None)
+        acceptance_paths = save_campaign_acceptance_artifacts(
+            latest_entry,
+            data_dir=data_dir,
+            comparability_ok=comp_ok_for_latest,
+        )
+        paths.update(acceptance_paths)
+        from decision_policy import check_campaign_acceptance as _check_accept
+        acceptance_result = _check_accept(latest_entry, comparability_ok=comp_ok_for_latest)
 
     # 1. Trend summary
     trend = build_trend_summary(history, window_size=window_size)
@@ -1394,7 +1544,7 @@ def save_governance_artifacts(
     gate_md_path.write_text(gate_md, encoding="utf-8")
     paths["promotion_gate.md"] = str(gate_md_path)
 
-    # 4. Governance report (includes comparability section)
+    # 4. Governance report (includes comparability + acceptance sections)
     gov_md = build_governance_report(
         trend_summary=trend,
         regression_alert=alert,
@@ -1402,6 +1552,7 @@ def save_governance_artifacts(
         stability=stability,
         latest_entry=latest_entry,
         comparability_result=comparability_result,
+        acceptance_result=acceptance_result,
     )
     gov_path = data_dir / "governance_report.md"
     gov_path.write_text(gov_md, encoding="utf-8")

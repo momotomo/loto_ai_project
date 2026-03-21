@@ -60,12 +60,19 @@ History artifacts (updated in data/ after each campaign)
 data/campaign_history.json     — all campaigns + recommendation stability
 data/campaign_history.csv      — tabular history for spreadsheet analysis
 data/campaign_diff_report.md   — diff vs previous campaign (READ THIS FIRST)
+data/benchmark_lock.json       — decision benchmark policy (machine-readable)
+data/benchmark_lock.md         — decision benchmark policy (human-readable)
+data/campaign_acceptance.json  — whether latest campaign is accepted for decisions
+data/campaign_acceptance.md    — human-readable acceptance verdict
 
 Reading order
 -------------
-1. data/campaign_diff_report.md          — what changed since last time?
-2. data/campaign_history.json            — stability trend across campaigns
-3. campaigns/<name>/cross_loto_report.md — detailed evidence pack
+1. data/governance_report.md             — combined governance summary
+2. data/campaign_acceptance.md           — is this campaign accepted for decisions?
+3. data/benchmark_lock.md               — what conditions must a campaign meet?
+4. data/campaign_diff_report.md          — what changed since last time?
+5. data/campaign_history.json            — stability trend across campaigns
+6. campaigns/<name>/cross_loto_report.md — detailed evidence pack
 
 Notes
 -----
@@ -95,6 +102,7 @@ from campaign_manager import (  # noqa: E402
     save_campaign_artifacts,
 )
 from comparability_checker import save_comparability_artifacts  # noqa: E402
+from decision_policy import save_benchmark_lock_artifacts  # noqa: E402
 from governance_layer import save_governance_artifacts  # noqa: E402
 from campaign_profiles import (  # noqa: E402
     VALID_PROFILE_NAMES,
@@ -602,6 +610,12 @@ def main() -> None:
     gov_path = governance_paths.get("governance_report.md")
     if gov_path:
         print(f"  Governance report:     {gov_path}")
+    acc_path = governance_paths.get("campaign_acceptance.md")
+    if acc_path:
+        print(f"  Campaign acceptance:   {acc_path}")
+    lock_path = governance_paths.get("benchmark_lock.md")
+    if lock_path:
+        print(f"  Benchmark lock:        {lock_path}")
     comp_path = governance_paths.get("comparability_report.md")
     if comp_path:
         print(f"  Comparability report:  {comp_path}")

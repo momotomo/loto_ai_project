@@ -382,16 +382,23 @@ python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile arc
 | `cross_loto_summary.json` | `campaigns/<name>/` | variant ranking / pairwise |
 | `recommendation.json` | `campaigns/<name>/` | next_action 推奨 |
 | `comparison_summary_{loto_type}.json` | `campaigns/<name>/` | per-loto 集計 |
-| `campaign_diff_report.md` | `data/` | 前回 campaign との差分（**最初に確認する**） |
-| `campaign_history.json` | `data/` | 全 campaign 履歴 + recommendation stability |
-| `campaign_history.csv` | `data/` | 表計算用履歴 |
+| `campaign_diff_report.md` | `data/` | 前回 campaign との差分（comparability セクション含む） |
+| `campaign_history.json` | `data/` | 全 campaign 履歴 + recommendation stability（accepted-only 集計含む） |
+| `campaign_history.csv` | `data/` | 表計算用履歴（accepted_for_decision_use 列含む） |
+| `benchmark_lock.json` | `data/` | Decision Benchmark Policy 定義（昇格判断条件） |
+| `benchmark_lock.md` | `data/` | benchmark_lock の人が読める版 |
+| `campaign_acceptance.json` | `data/` | 最新 campaign の昇格判断採用可否 |
+| `campaign_acceptance.md` | `data/` | campaign_acceptance の人が読める版（**governance 後に読む**） |
 
 ### artifact の読む順序
 
-1. `data/campaign_diff_report.md` — 前回からの変化（何が変わったか）
-2. `data/campaign_history.json` → `recommendation_stability` — 安定性トレンド
-3. `campaigns/<name>/cross_loto_report.md` — 今回 campaign の evidence pack
-4. `campaigns/<name>/cross_loto_summary.json` — 必要なら詳細 raw JSON
+1. `data/governance_report.md` — 全 governance シグナル統合レポート（最優先）
+2. `data/campaign_acceptance.md` — この campaign は昇格判断に使えるか
+3. `data/benchmark_lock.md` — 昇格判断に使える条件の定義
+4. `data/campaign_diff_report.md` — 前回からの変化（何が変わったか）
+5. `data/campaign_history.json` → `recommendation_stability` — 安定性トレンド
+6. `campaigns/<name>/cross_loto_report.md` — 今回 campaign の evidence pack
+7. `campaigns/<name>/cross_loto_summary.json` — 必要なら詳細 raw JSON
 
 ### recommendation stability の読み方
 
@@ -400,21 +407,30 @@ python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile arc
 ```json
 {
   "total_campaigns": 4,
+  "total_accepted_campaigns": 3,
   "latest_action": "run_more_seeds",
   "consecutive_same_action": 3,
   "consecutive_same_challenger": 4,
   "consecutive_keep_production": 4,
   "consecutive_run_more_seeds": 3,
   "consecutive_positive_signal_for_settransformer": 2,
-  "consecutive_positive_signal_for_deepsets": 1
+  "consecutive_positive_signal_for_deepsets": 1,
+  "consecutive_same_action_accepted_only": 2,
+  "consecutive_positive_signal_for_settransformer_accepted_only": 1
 }
 ```
 
-- `consecutive_same_action >= 3` かつ `run_more_seeds` → `archcomp_full` を実行して seed 数を増やす
-- `consecutive_same_action >= 2` かつ `consider_promotion` → 慎重に promotion を検討する
+全 campaign 対象の指標（`consecutive_same_action` など）はトレンド把握に使う。
+昇格判断には **`_accepted_only` の指標を使うこと**。
+
+- `consecutive_same_action_accepted_only >= 2` かつ `consider_promotion` → 昇格検討に進める根拠
+- `consecutive_same_action_accepted_only >= 3` かつ `run_more_seeds` → `archcomp_full` を実行
 - `consecutive_same_action >= 3` かつ `hold` → architecture 差が現れない可能性が高い
-- `consecutive_positive_signal_for_settransformer >= 2` → PMA/ISAB 探索の動機が揃った
+- `consecutive_positive_signal_for_settransformer_accepted_only >= 2` → PMA/ISAB 探索の動機（accepted のみ）
 - `consecutive_positive_signal_for_deepsets >= 2` → deepsets が legacy に対して継続的に優位
+
+> **注意**: `archcomp_lite` campaign は `accepted_for_decision_use=false` になるため、
+> `_accepted_only` カウントには含まれない。
 
 ## governance layer の運用
 
@@ -430,6 +446,10 @@ campaign 実行後に自動生成される 4 種類のシグナル集約 artifac
 | artifact | 形式 | 内容 |
 |----------|------|------|
 | `data/governance_report.md` | Markdown | 全 governance シグナルを統合した運用レポート（最優先） |
+| `data/benchmark_lock.json` | JSON | Decision Benchmark Policy（昇格判断条件の定義） |
+| `data/benchmark_lock.md` | Markdown | benchmark_lock の人が読める版 |
+| `data/campaign_acceptance.json` | JSON | 最新 campaign の昇格判断採用可否（accepted_for_decision_use） |
+| `data/campaign_acceptance.md` | Markdown | campaign_acceptance の人が読める版 |
 | `data/comparability_report.json` | JSON | campaign 間の比較可能性判定結果（benchmark・loto・variant 照合） |
 | `data/comparability_report.md` | Markdown | comparability_report の人が読める版 |
 | `data/trend_summary.json` | JSON | 直近 N campaign の傾向（rank 推移・logloss・pairwise）+比較可能性メモ |
@@ -438,6 +458,32 @@ campaign 実行後に自動生成される 4 種類のシグナル集約 artifac
 | `data/regression_alert.md` | Markdown | regression_alert の人が読める版 |
 | `data/promotion_gate.json` | JSON | 昇格検討フェーズに進んでよいかの gate 判定（比較可能性条件含む） |
 | `data/promotion_gate.md` | Markdown | promotion_gate の人が読める版 |
+
+### Decision Benchmark Policy と accepted campaign
+
+**comparable と accepted の違い**:
+
+| 概念 | 定義 | 用途 |
+|------|------|------|
+| **comparable** | 同一条件で比較可能（benchmark 互換・loto・variant・calibration 一致） | trend 解釈・regression alert |
+| **accepted** | Decision Benchmark Policy を満たす（archcomp/archcomp_full のみ・全 loto・comparability_ok） | 昇格判断の証拠として積む |
+
+**accepted であることが必要な場面**:
+- `consecutive_same_action_accepted_only` を昇格根拠にする
+- promotion gate が green かどうかを昇格根拠にする
+- PMA/ISAB 探索に進む判断の根拠にする
+
+**accepted でなくてよい場面**:
+- 単一 loto_type の sanity check（archcomp_lite）
+- 新しい設定の動作確認
+
+**archcomp_lite を昇格判断に使ってはいけない理由**:
+- loto6 のみのため全 loto_types 条件を満たさない
+- 2 seeds で variance が大きい
+- benchmark_registry で archcomp/archcomp_full とは非互換
+
+`data/campaign_acceptance.md` の Acceptance Status を読んで、`accepted_for_decision_use=true` を確認してから
+promotion readiness の議論を進めること。
 
 ### benchmark registry と comparability の役割
 
@@ -518,12 +564,17 @@ gate が green でも production は自動変更されない — 手動レビュ
 
 以下の条件が揃ったら次の variant 実装を検討できる:
 
-1. `recommendation.whether_to_try_pma_or_isab_next == true` が 2 回以上連続
-   （= `settransformer_vs_deepsets` overall `both_pass_count / run_count ≥ 0.5`）
+1. **`accepted_for_decision_use=true` の campaign** で:
+   - `recommendation.whether_to_try_pma_or_isab_next == true` が **2 回以上連続**
+   - `consecutive_positive_signal_for_settransformer_accepted_only >= 2`
 2. `recommended_next_action` が `consider_promotion` または `run_more_seeds`（`hold` でない）
-3. `archcomp` または `archcomp_full` profile での campaign に基づく（lite は不可）
+3. `archcomp` または `archcomp_full` profile に基づく（`archcomp_lite` の campaign は不可）
+4. promotion gate が green かつ manual review 完了
 
-この条件が満たされるまでは campaign を継続し、比較の信頼性を高めることを優先する。
+> **重要**: `archcomp_lite` で signal が出ても PMA/ISAB の根拠にはならない。
+> `campaign_acceptance.md` で `accepted_for_decision_use=true` を確認すること。
+
+この条件が満たされるまでは campaign を継続し、accepted campaign を積み上げることを優先する。
 
 ## 再現性メモ
 - `eval_report_*.json` と `manifest_*.json` には `data_fingerprint` / `training_context` / `runtime_environment` を保存する。
