@@ -185,10 +185,22 @@ jobs:
           assert '## Promotion Readiness Gate' in gov_md
           with tempfile.TemporaryDirectory() as d:
               paths = save_governance_artifacts(history, stability, data_dir=d)
-              expected = ['trend_summary.json', 'trend_summary.md', 'regression_alert.json', 'regression_alert.md', 'promotion_gate.json', 'promotion_gate.md', 'governance_report.md', 'comparability_report.json', 'comparability_report.md', 'benchmark_lock.json', 'benchmark_lock.md', 'campaign_acceptance.json', 'campaign_acceptance.md']
+              expected = [
+                  'trend_summary.json', 'trend_summary.md',
+                  'regression_alert.json', 'regression_alert.md',
+                  'promotion_gate.json', 'promotion_gate.md',
+                  'governance_report.md',
+                  'comparability_report.json', 'comparability_report.md',
+                  'benchmark_lock.json', 'benchmark_lock.md',
+                  'campaign_acceptance.json', 'campaign_acceptance.md',
+                  'accepted_campaign_summary.json', 'accepted_campaign_summary.md',
+                  'promotion_review_readiness.json', 'promotion_review_readiness.md',
+                  'accepted_campaign_review_bundle.json', 'accepted_campaign_review_bundle.md',
+              ]
               for name in expected:
                   assert name in paths, f'Missing: {name}'
                   assert pathlib.Path(paths[name]).exists(), f'File missing: {name}'
+              assert len(paths) == 19, f'Expected 19 artifacts, got {len(paths)}'
           print('governance artifact generation OK')
           "
 
@@ -292,4 +304,49 @@ jobs:
               data = json.loads(pathlib.Path(paths['comparability_report.json']).read_text())
               assert 'overall_comparable' in data
           print('comparability artifact generation OK')
+          "
+
+      - name: Verify promotion_review module imports cleanly
+        run: python -c "from promotion_review import build_accepted_campaign_summary, build_promotion_review_readiness, build_accepted_campaign_review_bundle, save_accepted_campaign_summary_artifacts, save_promotion_review_readiness_artifacts, save_accepted_campaign_review_bundle_artifacts, ACCEPTED_CAMPAIGN_SUMMARY_SCHEMA_VERSION, PROMOTION_REVIEW_READINESS_SCHEMA_VERSION, ACCEPTED_REVIEW_BUNDLE_SCHEMA_VERSION; assert ACCEPTED_CAMPAIGN_SUMMARY_SCHEMA_VERSION == 1; assert PROMOTION_REVIEW_READINESS_SCHEMA_VERSION == 1; assert ACCEPTED_REVIEW_BUNDLE_SCHEMA_VERSION == 1; print('promotion_review OK')"
+
+      - name: Smoke promotion review bundle generation
+        run: |
+          python -c "
+          import json, tempfile, pathlib
+          from cross_loto_summary import build_cross_loto_summary, build_recommendation
+          from campaign_manager import build_campaign_entry, append_campaign_to_history, compute_recommendation_stability
+          from promotion_review import build_accepted_campaign_summary, build_promotion_review_readiness, build_accepted_campaign_review_bundle, save_accepted_campaign_summary_artifacts, save_promotion_review_readiness_artifacts, save_accepted_campaign_review_bundle_artifacts
+          per_loto = {'loto6': {'schema_version': 1, 'loto_type': 'loto6', 'preset': 'archcomp', 'seeds': [42, 123, 456], 'run_count': 3, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 3, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3, 0.3, 0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04, 0.04, 0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01, 0.01, 0.01]}, 'calibration_recommendations': {'none': 3}, 'promote_count': 0, 'hold_count': 3}}, 'pairwise_comparisons': {}}, 'loto7': {'schema_version': 1, 'loto_type': 'loto7', 'preset': 'archcomp', 'seeds': [42, 123, 456], 'run_count': 3, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 3, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3, 0.3, 0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04, 0.04, 0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01, 0.01, 0.01]}, 'calibration_recommendations': {'none': 3}, 'promote_count': 0, 'hold_count': 3}}, 'pairwise_comparisons': {}}, 'miniloto': {'schema_version': 1, 'loto_type': 'miniloto', 'preset': 'archcomp', 'seeds': [42, 123, 456], 'run_count': 3, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 3, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3, 0.3, 0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04, 0.04, 0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01, 0.01, 0.01]}, 'calibration_recommendations': {'none': 3}, 'promote_count': 0, 'hold_count': 3}}, 'pairwise_comparisons': {}}}
+          cs = build_cross_loto_summary(per_loto, ['loto6', 'loto7', 'miniloto'], 'archcomp', [42, 123, 456])
+          rec = build_recommendation(cs)
+          e1 = build_campaign_entry('c1', 'archcomp', cs, rec, evaluation_model_variants='legacy,multihot,deepsets,settransformer', evaluation_calibration_methods='none,temperature,isotonic')
+          e2 = build_campaign_entry('c2', 'archcomp', cs, rec, evaluation_model_variants='legacy,multihot,deepsets,settransformer', evaluation_calibration_methods='none,temperature,isotonic')
+          assert e1['accepted_for_decision_use'] is True, f'Expected accepted: {e1}'
+          history = append_campaign_to_history([], e1)
+          history = append_campaign_to_history(history, e2)
+          stability = compute_recommendation_stability(history)
+          assert stability['total_accepted_campaigns'] == 2
+          acs = build_accepted_campaign_summary(history)
+          assert acs['accepted_campaign_count'] == 2
+          assert 'schema_version' in acs
+          prr = build_promotion_review_readiness(history, stability)
+          assert 'ready_for_promotion_review' in prr
+          assert isinstance(prr['ready_for_promotion_review'], bool)
+          bundle = build_accepted_campaign_review_bundle(history, stability)
+          assert 'ready_for_promotion_review' in bundle
+          assert 'latest_accepted_evidence' in bundle
+          with tempfile.TemporaryDirectory() as d:
+              paths1 = save_accepted_campaign_summary_artifacts(history, data_dir=d)
+              paths2 = save_promotion_review_readiness_artifacts(history, stability, data_dir=d)
+              paths3 = save_accepted_campaign_review_bundle_artifacts(history, stability, data_dir=d)
+              for p in [paths1, paths2, paths3]:
+                  for k, v in p.items():
+                      assert pathlib.Path(v).exists(), f'File missing: {k}'
+              data = json.loads(pathlib.Path(paths1['accepted_campaign_summary.json']).read_text())
+              assert data['schema_version'] == 1
+              data2 = json.loads(pathlib.Path(paths2['promotion_review_readiness.json']).read_text())
+              assert data2['schema_version'] == 1
+              data3 = json.loads(pathlib.Path(paths3['accepted_campaign_review_bundle.json']).read_text())
+              assert data3['schema_version'] == 1
+          print('promotion review bundle smoke OK')
           "

@@ -495,8 +495,10 @@ class TestSaveGovernanceArtifacts:
         stability = compute_recommendation_stability(single_history)
         with tempfile.TemporaryDirectory() as d:
             paths = save_governance_artifacts(single_history, stability, data_dir=d)
-            # 7 governance + 2 comparability + 2 benchmark_lock + 2 campaign_acceptance = 13
-            assert len(paths) == 13
+            # 7 governance + 2 comparability + 2 benchmark_lock + 2 campaign_acceptance
+            # + 2 accepted_campaign_summary + 2 promotion_review_readiness
+            # + 2 accepted_campaign_review_bundle = 19
+            assert len(paths) == 19
             for name in [
                 "trend_summary.json", "trend_summary.md",
                 "regression_alert.json", "regression_alert.md",
@@ -505,6 +507,9 @@ class TestSaveGovernanceArtifacts:
                 "comparability_report.json", "comparability_report.md",
                 "benchmark_lock.json", "benchmark_lock.md",
                 "campaign_acceptance.json", "campaign_acceptance.md",
+                "accepted_campaign_summary.json", "accepted_campaign_summary.md",
+                "promotion_review_readiness.json", "promotion_review_readiness.md",
+                "accepted_campaign_review_bundle.json", "accepted_campaign_review_bundle.md",
             ]:
                 assert name in paths, f"Missing: {name}"
 
@@ -542,8 +547,10 @@ class TestRunCampaignGovernanceSmoke:
         stability = compute_recommendation_stability(multi_history)
         with tempfile.TemporaryDirectory() as d:
             paths = save_governance_artifacts(multi_history, stability, data_dir=d)
-            # 7 governance + 2 comparability + 2 benchmark_lock + 2 campaign_acceptance = 13
-            assert len(paths) == 13
+            # 7 governance + 2 comparability + 2 benchmark_lock + 2 campaign_acceptance
+            # + 2 accepted_campaign_summary + 2 promotion_review_readiness
+            # + 2 accepted_campaign_review_bundle = 19
+            assert len(paths) == 19
             # Governance report is non-empty
             gov_md = Path(paths["governance_report.md"]).read_text(encoding="utf-8")
             assert len(gov_md) > 100

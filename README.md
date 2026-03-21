@@ -44,7 +44,10 @@ python scripts/run_campaign.py --campaign_name 2026-03-21_full --profile archcom
 
 Campaign 出力:
 - `data/governance_report.md` — 全 governance シグナルをまとめた運用レポート（**最初に読む**）
-- `data/campaign_acceptance.md` — **この campaign が昇格判断用として採用されるかの verdict**（governance に続いて読む）
+- `data/accepted_campaign_review_bundle.md` — **accepted campaign の evidence をまとめた review bundle（昇格検討時に読む）**
+- `data/promotion_review_readiness.md` — プロモーション review に進んでよいかの verdict
+- `data/accepted_campaign_summary.md` — accepted campaign のみの履歴サマリー（raw history と区別）
+- `data/campaign_acceptance.md` — この campaign が昇格判断用として採用されるかの verdict
 - `data/benchmark_lock.md` — 昇格判断に使える campaign の条件定義（decision benchmark policy）
 - `data/comparability_report.md` — campaign 間の比較可能性判定（trend・回帰判断の前提条件）
 - `data/trend_summary.md` — 直近 N campaign の傾向（rank・logloss・pairwise 推移）
@@ -55,7 +58,7 @@ Campaign 出力:
 - `data/campaign_history.csv` — 表計算用履歴（accepted_for_decision_use 列含む）
 - `campaigns/<campaign_name>/cross_loto_report.md` — evidence pack（詳細確認用）
 
-**読む順序:** `data/governance_report.md` → `data/campaign_acceptance.md` → `data/benchmark_lock.md` → `data/comparability_report.md` → `data/campaign_diff_report.md` → `campaigns/<name>/cross_loto_report.md`
+**読む順序:** `governance_report.md` → `accepted_campaign_review_bundle.md` → `promotion_review_readiness.md` → `campaign_acceptance.md` → `benchmark_lock.md` → `comparability_report.md` → `campaign_diff_report.md` → `campaigns/<name>/cross_loto_report.md`
 
 ### Campaign profile の違い
 
@@ -116,7 +119,8 @@ python scripts/run_cross_loto.py --report_only
 - `benchmark_registry.py` は archcomp_lite / archcomp / archcomp_full の benchmark 定義を管理する。benchmark は「同一条件での比較を保証する仕様セット」で、2 campaign が比較可能かどうかの基準になる。
 - `comparability_checker.py` は campaign 間の比較可能性を判定し `comparability_report.json` / `comparability_report.md` を生成する。benchmark・loto_types・variants・calibration・seeds・data fingerprint を照合し、hard failure（comparable=False）と warning（comparable-with-caveats）を区別する。
 - `decision_policy.py` は **Decision Benchmark Policy**（昇格判断に使える campaign の条件）を定義・管理する。`benchmark_lock.json` / `benchmark_lock.md` でポリシーを固定し、`campaign_acceptance.json` / `campaign_acceptance.md` で各 campaign の採用可否を判定する。`archcomp_lite` は sanity のみで昇格判断不可。
-- `governance_layer.py` は trend summary / regression alert / promotion gate / governance report の 4 artifact を生成する governance 層。campaign 実行後に自動呼び出され、comparability・acceptance・decision policy 情報も各 artifact に統合される。governance_report.md には「この campaign は昇格判断用として採用されるか」の verdict が先頭近くに表示される。
+- `promotion_review.py` は **accepted campaign だけを材料にした promotion review 向け artifacts** を生成する。`accepted_campaign_summary.json/.md`（accepted-only history view）・`promotion_review_readiness.json/.md`（review に進んでよいかの verdict）・`accepted_campaign_review_bundle.json/.md`（人間が読む review bundle）を出力する。production は自動変更されない。
+- `governance_layer.py` は trend summary / regression alert / promotion gate / governance report の 4 artifact に加えて、accepted campaign review artifacts（計 19 artifact）を生成する governance 層。governance_report.md には「この campaign は昇格判断用として採用されるか」「accepted evidence は review に進むのに十分か」の verdict が先頭近くに表示される。
 - `manifest_*.json` と `eval_report_*.json` には `data_fingerprint`、`training_context`、`runtime_environment` が入り、data hash / preprocessing version / seed / preset / model variant / calibration method / Python / dependency version を確認できます。
 - `smoke` preset は plumbing 確認用の 0-epoch 構成。`archcomp` preset は deepsets vs settransformer の architecture 比較専用 (eval_epochs=6, folds=3)。
 
