@@ -169,6 +169,127 @@ venv/bin/python scripts/run_multi_seed.py \
 - `input_summary.pooling` が `mean` (deepsets) vs `mean_after_attention` (settransformer) で、それ以外の構造は同一。純粋な attention 有無の効果が分離できる設計。
 - 次の候補 (PMA / ISAB) を追加する前に、まずこの比較 summary を確認し deepsets と settransformer のどちらが基準として優れているかを把握することを推奨する。
 
+## cross-loto comparison と decision artifact
+
+### 目的
+
+単一の loto_type だけの比較では、結果がそのゲームの特性（番号数・pick 数・データ量）に偏る可能性がある。
+cross-loto comparison は miniloto / loto6 / loto7 を横断して同じ variant を比較することで、
+「どの variant がどのゲームでも安定して有望か」を判断しやすくする。
+
+### 実行コマンド
+
+```bash
+# 全 loto_type を 3 seeds で比較（archcomp preset）
+venv/bin/python scripts/run_cross_loto.py \
+    --loto_types loto6,loto7,miniloto \
+    --preset archcomp \
+    --seeds 42,123,456 \
+    --evaluation_model_variants legacy,multihot,deepsets,settransformer \
+    --run_root runs
+
+# 既存の comparison_summary を再集計するだけ（学習を省略）
+venv/bin/python scripts/run_cross_loto.py \
+    --loto_types loto6,loto7,miniloto \
+    --skip_training
+```
+
+### 出力 artifact
+
+| artifact | 場所 | 内容 |
+|----------|------|------|
+| `comparison_summary_{loto_type}.json` | `data/` | 各 loto_type の per-seed 集計 |
+| `cross_loto_summary.json` | `data/` | loto_type 横断の variant 比較・ランキング |
+| `recommendation.json` | `data/` | 次に取るべき行動の機械可読・人間可読な推奨 |
+
+### cross_loto_summary.json の構造
+
+```json
+{
+  "schema_version": 1,
+  "loto_types": ["loto6", "loto7", "miniloto"],
+  "preset": "archcomp",
+  "seeds": [42, 123, 456],
+  "overall_summary": {
+    "variants": {
+      "deepsets": {
+        "loto_types_evaluated": ["loto6", "loto7", "miniloto"],
+        "logloss": {"mean": 0.123, "std": 0.005, "per_loto": {...}},
+        "brier":   {"mean": 0.045, "std": 0.002, "per_loto": {...}},
+        "ece":     {"mean": 0.012, "std": 0.003, "per_loto": {...}},
+        "promote_count_total": 0,
+        "hold_count_total": 9
+      }
+    }
+  },
+  "variant_ranking": {
+    "by_logloss": [{"rank": 1, "variant": "legacy", "mean": 0.290}, ...],
+    "by_brier":   [...],
+    "by_ece":     [...],
+    "promote_counts": {"deepsets": {"promote_count": 0, "hold_count": 9, "promote_rate": 0.0}},
+    "calibration_recommendations": {"deepsets": {"none": 9}}
+  },
+  "pairwise_comparison_summary": {
+    "settransformer_vs_deepsets": {
+      "per_loto": {"loto6": {"run_count": 3, "ci_wins": 1, ...}},
+      "overall":  {"run_count": 9, "ci_wins": 2, "permutation_wins": 3, "both_pass_count": 1}
+    }
+  },
+  "promotion_recommendation_summary": {
+    "deepsets": {
+      "promoted_in": [],
+      "held_in": ["loto6", "loto7", "miniloto"],
+      "consistent_promote": false,
+      "consistent_hold": true
+    }
+  }
+}
+```
+
+### recommendation.json の構造
+
+```json
+{
+  "schema_version": 1,
+  "based_on": "cross_loto_summary",
+  "recommended_next_action": "hold",
+  "recommended_challenger": "deepsets",
+  "keep_production_as_is": true,
+  "evidence_summary": {
+    "best_variant_by_logloss": "legacy",
+    "consistent_promote_variants": [],
+    "pairwise_clear_winner": null
+  },
+  "blockers_to_promotion": [
+    "No variant consistently passed promotion guardrails across loto_types."
+  ],
+  "whether_to_try_pma_or_isab_next": false,
+  "next_experiment_recommendations": [...]
+}
+```
+
+### cross-loto summary の読み方
+
+1. `variant_ranking.by_logloss` で全体傾向を確認する（lower = better）。
+2. `pairwise_comparison_summary.settransformer_vs_deepsets.overall` を見る:
+   - `both_pass_count / run_count >= 0.5` → attention (SAB) に明確なメリットあり
+   - それ以下 → まだ証拠不十分、追加 seed や default preset での確認を推奨
+3. `promotion_recommendation_summary.<variant>.consistent_promote` が true なら、
+   その variant は過半数の loto_type で promotion guardrail を通過している。
+4. `recommendation.json` の `recommended_next_action` を基本方針とする:
+   - `hold` → production を変えず追加実験を検討
+   - `run_more_seeds` → seed 数を増やして信頼区間を絞る
+   - `consider_promotion` → 候補 variant の本番学習を検討
+
+### 次に PMA / ISAB / HPO に進む判断条件
+
+- `recommendation.whether_to_try_pma_or_isab_next == true`
+  （= settransformer が cross-loto で deepsets に対して明確な優位を持つ）
+- かつ `recommended_next_action` が `consider_promotion` または `run_more_seeds`
+
+この条件が満たされるまでは、新しい variant を追加するより cross-loto comparison の
+信頼性を高めることを優先すること。
+
 ## 再現性メモ
 - `eval_report_*.json` と `manifest_*.json` には `data_fingerprint` / `training_context` / `runtime_environment` を保存する。
 - これにより data hash、preprocessing version、preset、seed、model variant、主要 hyperparameter、Python / dependency versions を artifact 単位で追える。

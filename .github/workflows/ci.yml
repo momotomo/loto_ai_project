@@ -38,3 +38,9 @@ jobs:
 
       - name: Verify comparison_summary module imports cleanly
         run: python -c "from comparison_summary import build_comparison_summary, COMPARISON_SUMMARY_SCHEMA_VERSION; print('comparison_summary OK, schema_version=', COMPARISON_SUMMARY_SCHEMA_VERSION)"
+
+      - name: Verify cross_loto_summary module imports cleanly
+        run: python -c "from cross_loto_summary import build_cross_loto_summary, build_recommendation, CROSS_LOTO_SUMMARY_SCHEMA_VERSION, RECOMMENDATION_SCHEMA_VERSION; print('cross_loto_summary OK, schema_version=', CROSS_LOTO_SUMMARY_SCHEMA_VERSION)"
+
+      - name: Verify run_cross_loto CLI parses correctly
+        run: python scripts/run_cross_loto.py --help > /dev/null
