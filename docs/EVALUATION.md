@@ -388,17 +388,25 @@ python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile arc
 | `benchmark_lock.json` | `data/` | Decision Benchmark Policy 定義（昇格判断条件） |
 | `benchmark_lock.md` | `data/` | benchmark_lock の人が読める版 |
 | `campaign_acceptance.json` | `data/` | 最新 campaign の昇格判断採用可否 |
-| `campaign_acceptance.md` | `data/` | campaign_acceptance の人が読める版（**governance 後に読む**） |
+| `campaign_acceptance.md` | `data/` | campaign_acceptance の人が読める版 |
+| `accepted_campaign_summary.json` | `data/` | accepted campaign のみの履歴サマリー（machine-readable） |
+| `accepted_campaign_summary.md` | `data/` | accepted-only 履歴の人が読める版（raw history と区別） |
+| `promotion_review_readiness.json` | `data/` | promotion review に進んでよいかの verdict（machine-readable） |
+| `promotion_review_readiness.md` | `data/` | promotion review readiness の人が読める版 |
+| `accepted_campaign_review_bundle.json` | `data/` | accepted campaign evidence をまとめた review bundle（machine-readable） |
+| `accepted_campaign_review_bundle.md` | `data/` | **review bundle の人が読める版（昇格検討時に読む）** |
 
 ### artifact の読む順序
 
-1. `data/governance_report.md` — 全 governance シグナル統合レポート（最優先）
-2. `data/campaign_acceptance.md` — この campaign は昇格判断に使えるか
-3. `data/benchmark_lock.md` — 昇格判断に使える条件の定義
-4. `data/campaign_diff_report.md` — 前回からの変化（何が変わったか）
-5. `data/campaign_history.json` → `recommendation_stability` — 安定性トレンド
-6. `campaigns/<name>/cross_loto_report.md` — 今回 campaign の evidence pack
-7. `campaigns/<name>/cross_loto_summary.json` — 必要なら詳細 raw JSON
+1. `data/governance_report.md` — 全 governance シグナル統合レポート（**最優先**）
+2. `data/accepted_campaign_review_bundle.md` — accepted evidence まとめ（**昇格検討時に読む**）
+3. `data/promotion_review_readiness.md` — promotion review に進んでよいか
+4. `data/accepted_campaign_summary.md` — accepted-only 履歴サマリー
+5. `data/campaign_acceptance.md` — この campaign は昇格判断に使えるか
+6. `data/benchmark_lock.md` — 昇格判断に使える条件の定義
+7. `data/campaign_diff_report.md` — 前回からの変化（何が変わったか）
+8. `data/campaign_history.json` → `recommendation_stability` — 安定性トレンド
+9. `campaigns/<name>/cross_loto_report.md` — 今回 campaign の evidence pack
 
 ### recommendation stability の読み方
 

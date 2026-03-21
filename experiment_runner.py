@@ -48,6 +48,7 @@ TRACKED_SOURCE_FILES = [
     "benchmark_registry.py",
     "comparability_checker.py",
     "decision_policy.py",
+    "promotion_review.py",
     "governance_layer.py",
     "comparison_summary.py",
     "cross_loto_summary.py",

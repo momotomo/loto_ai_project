@@ -57,22 +57,31 @@ campaigns/<campaign_name>/
 
 History artifacts (updated in data/ after each campaign)
 ---------------------------------------------------------
-data/campaign_history.json     — all campaigns + recommendation stability
-data/campaign_history.csv      — tabular history for spreadsheet analysis
-data/campaign_diff_report.md   — diff vs previous campaign (READ THIS FIRST)
-data/benchmark_lock.json       — decision benchmark policy (machine-readable)
-data/benchmark_lock.md         — decision benchmark policy (human-readable)
-data/campaign_acceptance.json  — whether latest campaign is accepted for decisions
-data/campaign_acceptance.md    — human-readable acceptance verdict
+data/campaign_history.json              — all campaigns + recommendation stability
+data/campaign_history.csv              — tabular history for spreadsheet analysis
+data/campaign_diff_report.md           — diff vs previous campaign
+data/benchmark_lock.json               — decision benchmark policy (machine-readable)
+data/benchmark_lock.md                 — decision benchmark policy (human-readable)
+data/campaign_acceptance.json          — whether latest campaign is accepted for decisions
+data/campaign_acceptance.md            — human-readable acceptance verdict
+data/accepted_campaign_summary.json    — accepted-only history summary (machine-readable)
+data/accepted_campaign_summary.md      — accepted-only history summary (human-readable)
+data/promotion_review_readiness.json   — review readiness verdict (machine-readable)
+data/promotion_review_readiness.md     — review readiness verdict (human-readable)
+data/accepted_campaign_review_bundle.json  — full accepted review bundle (machine-readable)
+data/accepted_campaign_review_bundle.md    — full accepted review bundle (READ FOR REVIEW)
 
 Reading order
 -------------
-1. data/governance_report.md             — combined governance summary
-2. data/campaign_acceptance.md           — is this campaign accepted for decisions?
-3. data/benchmark_lock.md               — what conditions must a campaign meet?
-4. data/campaign_diff_report.md          — what changed since last time?
-5. data/campaign_history.json            — stability trend across campaigns
-6. campaigns/<name>/cross_loto_report.md — detailed evidence pack
+1. data/governance_report.md                    — combined governance summary (START HERE)
+2. data/accepted_campaign_review_bundle.md      — full accepted review bundle (REVIEW HERE)
+3. data/promotion_review_readiness.md           — are we ready for promotion review?
+4. data/accepted_campaign_summary.md            — accepted-only history view
+5. data/campaign_acceptance.md                  — is this campaign accepted for decisions?
+6. data/benchmark_lock.md                       — what conditions must a campaign meet?
+7. data/campaign_diff_report.md                 — what changed since last time?
+8. data/campaign_history.json                   — stability trend across campaigns
+9. campaigns/<name>/cross_loto_report.md        — detailed evidence pack
 
 Notes
 -----
@@ -609,21 +618,27 @@ def main() -> None:
     print(f"\n=== Read first ===")
     gov_path = governance_paths.get("governance_report.md")
     if gov_path:
-        print(f"  Governance report:     {gov_path}")
+        print(f"  Governance report:          {gov_path}")
+    review_path = governance_paths.get("accepted_campaign_review_bundle.md")
+    if review_path:
+        print(f"  Accepted review bundle:     {review_path}")
+    readiness_path = governance_paths.get("promotion_review_readiness.md")
+    if readiness_path:
+        print(f"  Promotion review readiness: {readiness_path}")
     acc_path = governance_paths.get("campaign_acceptance.md")
     if acc_path:
-        print(f"  Campaign acceptance:   {acc_path}")
+        print(f"  Campaign acceptance:        {acc_path}")
     lock_path = governance_paths.get("benchmark_lock.md")
     if lock_path:
-        print(f"  Benchmark lock:        {lock_path}")
+        print(f"  Benchmark lock:             {lock_path}")
     comp_path = governance_paths.get("comparability_report.md")
     if comp_path:
-        print(f"  Comparability report:  {comp_path}")
+        print(f"  Comparability report:       {comp_path}")
     diff_path = history_paths.get("campaign_diff_report.md")
     if diff_path:
-        print(f"  Diff report:           {diff_path}")
-    print(f"  Evidence pack:         {campaign_dir / 'cross_loto_report.md'}")
-    print(f"  History:               {history_paths.get('campaign_history.json')}")
+        print(f"  Diff report:                {diff_path}")
+    print(f"  Evidence pack:              {campaign_dir / 'cross_loto_report.md'}")
+    print(f"  History:                    {history_paths.get('campaign_history.json')}")
     print()
 
 

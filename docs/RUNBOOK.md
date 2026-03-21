@@ -167,15 +167,18 @@
 
 - artifact の読み順:
   ```
-  1. data/governance_report.md        ← まずここを読む（acceptance・comparability 含む）
-  2. data/campaign_acceptance.md      ← この campaign は昇格判断用か？
-  3. data/benchmark_lock.md           ← 昇格判断に使える条件の定義
-  4. data/comparability_report.md     ← 比較可能性の詳細（必要時）
-  5. data/trend_summary.md            ← 傾向が見たいとき
-  6. data/regression_alert.md         ← 悪化シグナルの詳細
-  7. data/promotion_gate.md           ← 昇格 gate 条件の詳細
-  8. data/campaign_diff_report.md     ← 前回との差分（comparability セクション付き）
-  9. campaigns/<name>/cross_loto_report.md  ← evidence pack
+  1. data/governance_report.md                  ← まずここを読む（acceptance・comparability 含む）
+  2. data/accepted_campaign_review_bundle.md    ← accepted evidence まとめ（昇格検討時に読む）
+  3. data/promotion_review_readiness.md         ← promotion review に進んでよいか
+  4. data/accepted_campaign_summary.md          ← accepted-only 履歴サマリー
+  5. data/campaign_acceptance.md                ← この campaign は昇格判断用か？
+  6. data/benchmark_lock.md                     ← 昇格判断に使える条件の定義
+  7. data/comparability_report.md               ← 比較可能性の詳細（必要時）
+  8. data/trend_summary.md                      ← 傾向が見たいとき
+  9. data/regression_alert.md                   ← 悪化シグナルの詳細
+  10. data/promotion_gate.md                    ← 昇格 gate 条件の詳細
+  11. data/campaign_diff_report.md              ← 前回との差分（comparability セクション付き）
+  12. campaigns/<name>/cross_loto_report.md     ← evidence pack
   ```
 
 - acceptance status の解釈:
@@ -204,6 +207,64 @@
   - **gate が green でも campaign が accepted でなければ昇格根拠にしてはならない**
   - 手動レビュー後に `python train_prob_model.py` で本番学習を行うこと
 
+## accepted campaign review bundle を使って昇格検討を進めたい
+
+- 症状: governance_report を確認したが、昇格検討に入ってよいか判断したい。accepted evidence を一覧で見たい。
+- **accepted campaign review bundle とは**: `accepted_for_decision_use=True` の campaign だけを材料にして、昇格検討に使える evidence をまとめた artifact。raw campaign history と区別する。campaign を重ねるたびに自動更新される。
+- **読む順序**:
+  1. **`data/governance_report.md`** — 全シグナルの統合レポート（まずここ。`ready_for_promotion_review` が先頭近くに表示される）
+  2. **`data/accepted_campaign_review_bundle.md`** — accepted campaign evidence のまとめ（昇格検討時に次に読む）
+  3. **`data/promotion_review_readiness.md`** — readiness の条件別 verdict（どの条件がブロッカーかを確認する）
+  4. **`data/accepted_campaign_summary.md`** — accepted-only 履歴の分布（action_distribution・streak）
+- 対処:
+  1. `data/governance_report.md` の先頭近くにある **Promotion Review Readiness** セクションを確認する:
+     - `ready_for_promotion_review: true` → `accepted_campaign_review_bundle.md` に進む
+     - `ready_for_promotion_review: false` → `blockers` を確認して満たされていない条件を調べる
+  2. `data/accepted_campaign_review_bundle.md` の **Quick Overview** を読む:
+     - `ready_for_promotion_review` が `✅ YES` か `❌ NO` か
+     - `candidate_variant` に昇格候補が入っているか
+     - `accepted_campaign_count` が 2 以上か
+  3. **Readiness Conditions** セクションで 5 条件の充足状況を確認する:
+     - `min_accepted_campaigns` — accepted campaign が ≥2 必要
+     - `consecutive_positive_signal` — accepted campaign の連続 positive signal が ≥2 必要
+     - `no_high_regression_alert` — alert_level が HIGH でないこと
+     - `gate_green_or_yellow` — gate が 🟢 green または 🟡 yellow であること
+     - `consistent_promote_variants_in_latest_accepted` — 最新 accepted campaign に consistent_promote_variants があること
+  4. **Blockers** セクションにブロッカーが残っている場合はその内容を確認し、解消する:
+     - 不足 accepted campaign → `archcomp` / `archcomp_full` で追加実行
+     - consecutive positive 不足 → `run_more_seeds` が続く限り campaign を積む
+     - HIGH regression alert → `data/regression_alert.md` で悪化原因を調査する
+     - gate が red → `data/promotion_gate.md` でブロッカーを確認する
+
+- **comparable かつ accepted でも、まだ review-ready ではないケース**:
+  - `comparable=true` かつ `accepted_for_decision_use=true` の campaign が 1 本だけ → `min_accepted_campaigns` 未達で not ready
+  - accepted が 2 本あっても、latest が `hold` / latest と前回が両方 `hold` → `consecutive_positive_signal` 未達
+  - accepted campaign の gate が yellow でも `consistent_promote_variants` が空 → 条件 5 未達で not ready
+  - HIGH regression alert が出ている → 悪化が解消されるまで not ready（archcomp 追加実行でも解消されない）
+  - > **要約**: comparable + accepted であることは必要条件だが、さらに「連続 positive が ≥2」「gate が 🔴 でない」「候補 variant が明確」のすべてが揃わないと review-ready にならない。
+
+- **昇格 review に進む条件**（promotion review readiness の 5 条件）:
+  | 条件 | 閾値 | 満たさない場合 |
+  |------|------|---------------|
+  | accepted campaign 数 | ≥2 | archcomp キャンペーンを追加実行 |
+  | 連続 positive signal（accepted のみ） | ≥2 consecutive | `run_more_seeds` / `consider_promotion` が 2 回連続するまで campaign を積む |
+  | regression alert | HIGH でないこと | 悪化原因を調査・解消してから再 campaign |
+  | promotion gate | 🟢 green または 🟡 yellow | gate ブロッカーを解消する |
+  | 最新 accepted の consistent_promote_variants | 空でないこと | promotion 候補 variant が現れるまで campaign を積む |
+
+  > **注**: 条件を満たして `ready_for_promotion_review: true` になっても、production は自動変更されない。
+  > `accepted_campaign_review_bundle.md` を人間が確認したうえで `train_prob_model.py` を手動実行すること。
+  > PMA / ISAB / HPO への展開は、promotion review 完了後に別途判断する（review-ready とは別フェーズ）。
+
+- 各 artifact の役割:
+  | artifact | 役割 |
+  |----------|------|
+  | `governance_report.md` | 全シグナル統合。**まず読む** |
+  | `accepted_campaign_review_bundle.md` | accepted evidence まとめ。**昇格検討時に読む** |
+  | `promotion_review_readiness.md` | readiness 条件の詳細 verdict |
+  | `accepted_campaign_summary.md` | accepted-only 履歴の分布・streak（raw history と区別） |
+  | `campaign_acceptance.md` | 今回 campaign が accepted か否かの判定 |
+
 ## campaign を使って比較を継続監視したい
 
 - 症状: 比較を 1 回で終わらせず、前回との差分と傾向の変化を追いたい。
@@ -226,7 +287,11 @@
      - `data/governance_report.md` — 全 governance シグナルをまとめた運用レポート（**最優先で読む**）
      - governance report 内の **Current Campaign Acceptance セクションを最初に確認する**（昇格判断用か）
      - 続いて **Comparability セクション** を確認する（比較の前提条件）
-  3. 詳細が必要なら個別 artifact を読む:
+  3. 昇格検討に入りそうな場合は **accepted campaign review bundle** を読む:
+     - `data/accepted_campaign_review_bundle.md` — accepted evidence まとめ（昇格検討時に読む）
+     - `data/promotion_review_readiness.md` — promotion review に進んでよいかの verdict
+     - `data/accepted_campaign_summary.md` — accepted-only 履歴の分布・action streak
+  4. 詳細が必要なら個別 artifact を読む:
      - `data/campaign_acceptance.md` — この campaign が昇格判断用として採用されるかの verdict
      - `data/benchmark_lock.md` — 昇格判断に使える campaign の条件定義
      - `data/comparability_report.md` — campaign 間の比較可能性詳細（❌ の場合は必読）
