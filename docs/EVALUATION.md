@@ -270,6 +270,10 @@ venv/bin/python scripts/run_cross_loto.py \
 
 ### cross-loto summary の読み方
 
+**まず `data/cross_loto_report.md` を開く** — 全情報を人が読みやすい Markdown にまとめたレポート。
+詳細を掘り下げたいときに `data/cross_loto_summary.json` / `recommendation.json` を参照する。
+表計算で確認したいときは `data/variant_metrics.csv` / `data/pairwise_comparisons.csv` を使う。
+
 1. `variant_ranking.by_logloss` で全体傾向を確認する（lower = better）。
 2. `pairwise_comparison_summary.settransformer_vs_deepsets.overall` を見る:
    - `both_pass_count / run_count >= 0.5` → attention (SAB) に明確なメリットあり
@@ -281,14 +285,54 @@ venv/bin/python scripts/run_cross_loto.py \
    - `run_more_seeds` → seed 数を増やして信頼区間を絞る
    - `consider_promotion` → 候補 variant の本番学習を検討
 
+### 出力 artifact（全形式）
+
+| artifact | 場所 | 内容 | 用途 |
+|----------|------|------|------|
+| `comparison_summary_{loto_type}.json` | `data/` | 各 loto_type の per-seed 集計 | raw JSON |
+| `cross_loto_summary.json` | `data/` | loto_type 横断の variant 比較・ランキング | raw JSON |
+| `recommendation.json` | `data/` | 次に取るべき行動の推奨 | raw JSON |
+| `cross_loto_report.md` | `data/` | 全情報を人が読める Markdown evidence pack | まず読むもの |
+| `variant_metrics.csv` | `data/` | variant ごとの logloss/brier/ece + promote/hold | 表計算 |
+| `pairwise_comparisons.csv` | `data/` | pairwise 比較の per-loto + overall | 表計算 |
+| `recommendation_summary.csv` | `data/` | recommendation 1 行サマリ | 表計算 |
+
+### レポートだけ再生成する（学習なし）
+
+```bash
+# 既存の cross_loto_summary.json / recommendation.json から Markdown + CSV を再生成
+venv/bin/python scripts/run_cross_loto.py --report_only
+```
+
+### 判断ルールの明文化（decision rules）
+
+| 条件 | next_action |
+|------|------------|
+| 非 legacy variant が ≥50% の loto_type で昇格判定を通過 | `consider_promotion` |
+| 上記なし、かつ pairwise で both_pass_count/run_count ≥ 0.5 の pair が存在 | `run_more_seeds` |
+| 上記いずれも該当しない | `hold` |
+
+しきい値:
+- `CONSISTENT_PROMOTE_THRESHOLD = 0.5` — variant が昇格した loto_type 数 / 評価 loto_type 数 ≥ 0.5
+- `PAIRWISE_SIGNAL_THRESHOLD = 0.5` — pairwise の both_pass_count / run_count ≥ 0.5
+
+これらのしきい値は `cross_loto_summary.py` と `cross_loto_report.py` のコードと同期している。
+
+### production を変えない前提での読み方
+
+- `keep_production_as_is: true` → production artifact は変更しない
+- `skip_final_train` が既定 `True` のため、比較実行で production が上書きされることはない
+- production を変える場合は明示的に `--no_skip_final_train` と `--model_variant <variant>` を指定する
+
 ### 次に PMA / ISAB / HPO に進む判断条件
 
 - `recommendation.whether_to_try_pma_or_isab_next == true`
-  （= settransformer が cross-loto で deepsets に対して明確な優位を持つ）
+  （= settransformer_vs_deepsets の overall both_pass_count / run_count ≥ 0.5）
 - かつ `recommended_next_action` が `consider_promotion` または `run_more_seeds`
 
 この条件が満たされるまでは、新しい variant を追加するより cross-loto comparison の
-信頼性を高めることを優先すること。
+信頼性を高めることを優先すること。`cross_loto_report.md` の「Decision Rules」節で
+判断条件を確認できる。
 
 ## 再現性メモ
 - `eval_report_*.json` と `manifest_*.json` には `data_fingerprint` / `training_context` / `runtime_environment` を保存する。

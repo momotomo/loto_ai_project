@@ -44,3 +44,48 @@ jobs:
 
       - name: Verify run_cross_loto CLI parses correctly
         run: python scripts/run_cross_loto.py --help > /dev/null
+
+      - name: Verify cross_loto_report module imports cleanly
+        run: python -c "from cross_loto_report import build_markdown_report, build_variant_metrics_csv, build_pairwise_comparisons_csv, build_recommendation_summary_csv, build_run_metadata, save_report_artifacts, CROSS_LOTO_REPORT_SCHEMA_VERSION; print('cross_loto_report OK, schema_version=', CROSS_LOTO_REPORT_SCHEMA_VERSION)"
+
+      - name: Smoke cross_loto_report artifact generation
+        run: |
+          python -c "
+          from cross_loto_summary import build_cross_loto_summary, build_recommendation
+          from cross_loto_report import build_markdown_report, build_variant_metrics_csv, build_pairwise_comparisons_csv, build_recommendation_summary_csv, build_run_metadata, save_report_artifacts
+          import tempfile, pathlib
+          per_loto = {'loto6': {'schema_version': 1, 'loto_type': 'loto6', 'preset': 'archcomp', 'seeds': [42], 'run_count': 1, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 1, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01]}, 'calibration_recommendations': {'none': 1}, 'promote_count': 0, 'hold_count': 1}}, 'pairwise_comparisons': {}}}
+          cs = build_cross_loto_summary(per_loto, ['loto6'], 'archcomp', [42])
+          rec = build_recommendation(cs)
+          md = build_markdown_report(cs, rec)
+          assert '## Decision Rules' in md
+          vm = build_variant_metrics_csv(cs)
+          assert 'variant' in vm
+          pw = build_pairwise_comparisons_csv(cs)
+          assert 'comparison_key' in pw
+          rs = build_recommendation_summary_csv(cs, rec)
+          assert 'recommended_next_action' in rs
+          with tempfile.TemporaryDirectory() as d:
+              saved = save_report_artifacts(cs, rec, data_dir=d)
+              assert len(saved) == 4
+          print('cross_loto_report artifact generation OK')
+          "
+
+      - name: Smoke run_cross_loto --report_only with minimal fixtures
+        run: |
+          python -c "
+          import json, tempfile, pathlib, subprocess, sys
+          from cross_loto_summary import build_cross_loto_summary, build_recommendation
+          per_loto = {'loto6': {'schema_version': 1, 'loto_type': 'loto6', 'preset': 'archcomp', 'seeds': [42], 'run_count': 1, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 1, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01]}, 'calibration_recommendations': {'none': 1}, 'promote_count': 0, 'hold_count': 1}}, 'pairwise_comparisons': {}}}
+          cs = build_cross_loto_summary(per_loto, ['loto6'], 'archcomp', [42])
+          rec = build_recommendation(cs)
+          with tempfile.TemporaryDirectory() as d:
+              dp = pathlib.Path(d)
+              (dp / 'cross_loto_summary.json').write_text(json.dumps(cs))
+              (dp / 'recommendation.json').write_text(json.dumps(rec))
+              result = subprocess.run([sys.executable, 'scripts/run_cross_loto.py', '--report_only', '--data_dir', d], capture_output=True, text=True)
+              assert result.returncode == 0, f'FAILED: {result.stderr}'
+              assert (dp / 'cross_loto_report.md').exists()
+              assert (dp / 'variant_metrics.csv').exists()
+          print('--report_only smoke OK')
+          "

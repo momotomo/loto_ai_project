@@ -1,15 +1,19 @@
 """scripts/run_cross_loto.py
 
 Run architecture comparison across multiple loto_types and aggregate results
-into a cross-loto summary artifact (data/cross_loto_summary.json) and a
-recommendation artifact (data/recommendation.json).
+into a cross-loto summary artifact (data/cross_loto_summary.json), a
+recommendation artifact (data/recommendation.json), and a human-readable
+evidence pack (data/cross_loto_report.md + CSV files).
 
 Each loto_type is compared independently with multiple seeds using the same
 logic as run_multi_seed.py.  Results are then combined into a single
 cross-loto view that makes it easy to see which variant performs best across
 the full range of lottery games.
 
-Typical usage:
+Modes
+-----
+
+Full run (train + aggregate + report):
 
     python scripts/run_cross_loto.py \\
         --loto_types loto6,loto7,miniloto \\
@@ -18,14 +22,16 @@ Typical usage:
         --evaluation_model_variants legacy,multihot,deepsets,settransformer \\
         --run_root runs
 
-Minimal cross-loto smoke (reuses existing comparison_summary if available):
+Skip training — re-aggregate from existing comparison_summary files:
 
     python scripts/run_cross_loto.py \\
-        --loto_types loto6 \\
-        --preset smoke \\
-        --seeds 42 \\
-        --skip_training \\
-        --run_root runs
+        --loto_types loto6,loto7,miniloto \\
+        --skip_training
+
+Report only — regenerate Markdown/CSV from existing cross_loto_summary.json:
+
+    python scripts/run_cross_loto.py \\
+        --report_only
 
 Notes
 -----
@@ -34,10 +40,14 @@ Notes
   data/comparison_summary_{loto_type}.json (same as run_multi_seed.py).
 - The cross-loto summary is written to data/cross_loto_summary.json.
 - The recommendation artifact is written to data/recommendation.json.
+- The Markdown evidence pack is written to data/cross_loto_report.md.
+- CSV artifacts: data/variant_metrics.csv, data/pairwise_comparisons.csv,
+  data/recommendation_summary.csv.
 - Production artifacts are NOT updated unless --model_variant is set and
   --no_skip_final_train is passed explicitly.
 - Use --skip_training to skip all model runs and only (re-)build the
   cross-loto summary and recommendation from existing comparison_summary files.
+- Use --report_only to only regenerate Markdown/CSV from existing JSON artifacts.
 """
 
 from __future__ import annotations
@@ -45,6 +55,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +76,11 @@ from cross_loto_summary import (  # noqa: E402
     load_comparison_summary,
     save_json,
 )
+from cross_loto_report import (  # noqa: E402
+    build_run_metadata,
+    load_cross_loto_artifacts,
+    save_report_artifacts,
+)
 from experiment_runner import execute_experiment, resolve_experiment_config  # noqa: E402
 from model_variants import MODEL_VARIANT_CHOICES  # noqa: E402
 from config import LOTO_CONFIG  # noqa: E402
@@ -76,8 +92,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run architecture comparison across multiple loto_types and build "
-            "a cross-loto summary and recommendation artifact."
+            "a cross-loto summary, recommendation artifact, and evidence pack."
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Modes:
+  Full run (default):   train all seeds, aggregate, generate reports
+  --skip_training:      skip model training; re-aggregate from existing comparison_summary files
+  --report_only:        skip everything; regenerate Markdown/CSV from existing cross_loto_summary.json
+        """,
     )
     parser.add_argument(
         "--loto_types",
@@ -150,6 +173,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Skip all model training runs. Only aggregate existing "
             "comparison_summary_{loto_type}.json files into cross-loto summary."
+        ),
+    )
+    parser.add_argument(
+        "--report_only",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip training and aggregation. Only regenerate Markdown/CSV reports "
+            "from existing data/cross_loto_summary.json and data/recommendation.json."
         ),
     )
     parser.add_argument(
@@ -328,12 +360,36 @@ def load_existing_comparison_summary(loto_type: str, data_dir: str) -> dict | No
         return None
 
 
+def _resolve_data_dir(repo_root: str, data_dir_arg: str) -> str:
+    """Resolve data_dir to an absolute path."""
+    if Path(data_dir_arg).is_absolute():
+        return data_dir_arg
+    return str(Path(repo_root) / data_dir_arg)
+
+
 def main() -> None:
     args = parse_args()
+    repo_root = str(Path(args.repo_root).resolve())
+    data_dir = _resolve_data_dir(repo_root, args.data_dir)
+
+    # --- report_only mode ---
+    if args.report_only:
+        print("\n=== Report-Only Mode: regenerating Markdown/CSV from existing artifacts ===")
+        try:
+            cross_summary, recommendation = load_cross_loto_artifacts(data_dir)
+        except FileNotFoundError as exc:
+            raise SystemExit(
+                f"Cannot find required artifacts in {data_dir}: {exc}\n"
+                "Run without --report_only first to generate cross_loto_summary.json."
+            )
+        saved = save_report_artifacts(cross_summary, recommendation, data_dir=data_dir)
+        print("Report artifacts regenerated:")
+        for name, path in saved.items():
+            print(f"  {name}: {path}")
+        return
+
     seeds = parse_seeds(args.seeds)
     loto_types = parse_loto_types(args.loto_types)
-    repo_root = str(Path(args.repo_root).resolve())
-    data_dir = str(Path(repo_root) / args.data_dir) if not Path(args.data_dir).is_absolute() else args.data_dir
 
     print(f"\n=== Cross-Loto Architecture Comparison ===")
     print(f"loto_types: {loto_types}")
@@ -345,6 +401,7 @@ def main() -> None:
     print()
 
     per_loto_summaries: dict[str, dict] = {}
+    source_summary_paths: dict[str, str] = {}
 
     if args.skip_training:
         # Only aggregate from existing comparison_summary files
@@ -353,6 +410,8 @@ def main() -> None:
             summary = load_existing_comparison_summary(loto_type, data_dir)
             if summary is not None:
                 per_loto_summaries[loto_type] = summary
+                path = str(get_comparison_summary_path(loto_type, data_dir=data_dir))
+                source_summary_paths[loto_type] = path
                 print(f"  Loaded existing summary for {loto_type}: run_count={summary.get('run_count')}")
             else:
                 print(f"  WARNING: No comparison_summary found for {loto_type} — skipping.")
@@ -376,6 +435,9 @@ def main() -> None:
                     data_dir=data_dir,
                 )
                 per_loto_summaries[loto_type] = summary
+                source_summary_paths[loto_type] = str(
+                    get_comparison_summary_path(loto_type, data_dir=data_dir)
+                )
             except SystemExit as exc:
                 print(f"\nERROR for {loto_type}: {exc}. Continuing with remaining loto_types.")
 
@@ -400,6 +462,26 @@ def main() -> None:
     rec_path = get_recommendation_path(data_dir=data_dir)
     save_json(recommendation, rec_path)
     print(f"Recommendation artifact saved: {rec_path}")
+
+    # Build run metadata
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_cross_loto"
+    run_metadata = build_run_metadata(
+        loto_types=list(per_loto_summaries.keys()),
+        preset=args.preset,
+        seeds=seeds,
+        evaluation_model_variants=args.evaluation_model_variants,
+        alpha=args.alpha,
+        source_summary_paths=source_summary_paths,
+        run_id=run_id,
+    )
+
+    # Save Markdown + CSV evidence pack
+    print("\n--- Generating evidence pack (Markdown + CSV) ---")
+    saved_paths = save_report_artifacts(
+        cross_summary, recommendation, data_dir=data_dir, run_metadata=run_metadata
+    )
+    for name, path in saved_paths.items():
+        print(f"  {name}: {path}")
 
     # Human-readable summary
     print(f"\n=== Summary ({len(per_loto_summaries)} loto_type(s), seeds={seeds}) ===")
@@ -443,6 +525,12 @@ def main() -> None:
     print("  next_experiment_recommendations:")
     for r in rec.get("next_experiment_recommendations") or []:
         print(f"    - {r}")
+    print()
+
+    print(f"=== Evidence Pack ===")
+    print(f"  Read first:  {saved_paths.get('cross_loto_report.md')}")
+    print(f"  Raw JSON:    {cross_summary_path}")
+    print(f"  CSV sheets:  variant_metrics.csv, pairwise_comparisons.csv, recommendation_summary.csv")
     print()
 
 

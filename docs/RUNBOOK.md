@@ -143,19 +143,30 @@
          --evaluation_model_variants legacy,multihot,deepsets,settransformer \
          --run_root runs
      ```
-  2. 生成された artifact を確認する:
-     - `data/comparison_summary_{loto_type}.json` — 各 loto_type の per-seed 集計
-     - `data/cross_loto_summary.json` — 横断 ranking / pairwise / promotion 傾向
-     - `data/recommendation.json` — 次に何をすべきかの推奨
-  3. `recommendation.recommended_next_action` を基本方針として次の実験を決める。
+  2. 生成された artifact を確認する（**まず Markdown を読む**）:
+     - `data/cross_loto_report.md` — 全情報を人が読める Markdown evidence pack (**読み始めはここ**)
+     - `data/variant_metrics.csv` / `data/pairwise_comparisons.csv` / `data/recommendation_summary.csv` — 表計算用 CSV
+     - `data/cross_loto_summary.json` — 横断 ranking / pairwise / promotion 傾向（raw JSON）
+     - `data/recommendation.json` — 次に何をすべきかの推奨（raw JSON）
+     - `data/comparison_summary_{loto_type}.json` — 各 loto_type の per-seed 集計（raw JSON）
+  3. Markdown の `## Recommendation` 節で `recommended_next_action` を確認する:
+     - `hold` → production を変えず追加実験を検討
+     - `run_more_seeds` → seed 数を増やして信頼区間を絞る（`PAIRWISE_SIGNAL_THRESHOLD >= 0.5` の pair がある）
+     - `consider_promotion` → 候補 variant の本番学習を検討（`CONSISTENT_PROMOTE_THRESHOLD >= 0.5` を満たした variant がある）
   4. `recommendation.whether_to_try_pma_or_isab_next` が true なら PMA / ISAB の試験を検討する。
+     （条件: settransformer_vs_deepsets の both_pass_count/run_count ≥ 0.5）
 - メモ:
   - 既存の `comparison_summary_{loto_type}.json` から学習をスキップして集計だけやり直せる:
     ```bash
     venv/bin/python scripts/run_cross_loto.py --loto_types loto6,loto7,miniloto --skip_training
     ```
+  - 既存の `cross_loto_summary.json` / `recommendation.json` から Markdown + CSV だけ再生成できる:
+    ```bash
+    venv/bin/python scripts/run_cross_loto.py --report_only
+    ```
   - 各 loto_type の per-seed run は `runs/<run_id>/` に独立して残る。
   - cross-loto summary は `data/cross_loto_summary.json` に上書きされる。
+  - `--skip_final_train` が既定 True のため、比較実行で production artifact が上書きされることはない。
   - 新しい variant を追加する前に必ずこの cross-loto summary を確認すること。
 
 ## GitHub Actions からの Kaggle kick 失敗
