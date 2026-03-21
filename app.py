@@ -17,6 +17,7 @@ import streamlit as st
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 
+import model_layers  # noqa: F401 – registers custom Keras layers (e.g. SetAttentionBlock)
 from artifact_utils import inspect_prediction_artifact_integrity as inspect_prediction_artifact_integrity_helper
 from calibration_utils import NO_CALIBRATION_METHOD, apply_calibration_artifact, get_calibration_method_label, load_calibrator_artifact
 from config import ARTIFACT_SCHEMA_VERSION, LOOKBACK_WINDOW, LOTO_CONFIG, generate_valid_sample

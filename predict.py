@@ -7,6 +7,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 import warnings
+import model_layers  # noqa: F401 – registers custom Keras layers (e.g. SetAttentionBlock)
 from calibration_utils import (
     NO_CALIBRATION_METHOD,
     apply_calibration_artifact,

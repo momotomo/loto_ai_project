@@ -31,4 +31,4 @@ jobs:
         run: pytest -q
 
       - name: Smoke update_system
-        run: python update_system.py --loto_type loto6 --train_preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic --skip_final_train --skip_data_refresh --seed 42
+        run: python update_system.py --loto_type loto6 --train_preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic --skip_final_train --skip_data_refresh --seed 42
