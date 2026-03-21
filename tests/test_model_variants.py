@@ -137,3 +137,83 @@ def test_deepsets_model_forward_shape_and_probability_range():
     assert outputs.shape == (2, LOTO_CONFIG["loto6"]["max_num"])
     assert float(outputs.min()) >= 0.0
     assert float(outputs.max()) <= 1.0
+
+
+def test_settransformer_dataset_has_expected_shape_and_input_summary():
+    df = build_loto6_history()
+    dataset = prepare_model_dataset(df, "loto6", "settransformer")
+    pick_count = LOTO_CONFIG["loto6"]["pick_count"]
+
+    assert dataset["raw_features"].shape == (len(df), pick_count * 3)
+    assert dataset["targets"].shape == (len(df) - LOOKBACK_WINDOW, LOTO_CONFIG["loto6"]["max_num"])
+    assert dataset["dataset_metadata"]["feature_strategy"] == "set_sequence_settransformer"
+    assert dataset["dataset_metadata"]["row_shape"] == [pick_count, 3]
+    assert dataset["dataset_metadata"]["input_summary"]["pooling"] == "mean_after_attention"
+    assert dataset["dataset_metadata"]["input_summary"]["attention_block_count"] == 1
+    # Same feature column layout as deepsets – ensures direct comparability
+    assert dataset["feature_cols"][:6] == [
+        "slot01_number_norm",
+        "slot01_frequency",
+        "slot01_gap",
+        "slot02_number_norm",
+        "slot02_frequency",
+        "slot02_gap",
+    ]
+
+
+def test_settransformer_input_matches_deepsets_layout():
+    """settransformer and deepsets must share the same raw feature layout."""
+    df = build_loto6_history(LOOKBACK_WINDOW + 3)
+    ds_dataset = prepare_model_dataset(df, "loto6", "deepsets")
+    st_dataset = prepare_model_dataset(df, "loto6", "settransformer")
+
+    np.testing.assert_allclose(ds_dataset["raw_features"], st_dataset["raw_features"])
+    assert ds_dataset["feature_cols"] == st_dataset["feature_cols"]
+    assert ds_dataset["dataset_metadata"]["row_shape"] == st_dataset["dataset_metadata"]["row_shape"]
+    assert ds_dataset["dataset_metadata"]["element_feature_count"] == st_dataset["dataset_metadata"]["element_feature_count"]
+
+
+def test_settransformer_rows_are_prefix_stable_and_window_shape_is_4d():
+    df = build_loto6_history(LOOKBACK_WINDOW + 5)
+    shorter_dataset = prepare_model_dataset(df.iloc[: LOOKBACK_WINDOW + 1].copy(), "loto6", "settransformer")
+    longer_dataset = prepare_model_dataset(df, "loto6", "settransformer")
+    np.testing.assert_allclose(
+        shorter_dataset["raw_features"],
+        longer_dataset["raw_features"][: LOOKBACK_WINDOW + 1],
+    )
+
+    scaler = MinMaxScaler()
+    scaler.fit(fit_scaler_for_variant(longer_dataset["raw_features"], longer_dataset["dataset_metadata"]))
+    scaled = transform_features_for_variant(longer_dataset["raw_features"], scaler, longer_dataset["dataset_metadata"])
+    X = build_model_samples_from_scaled_rows(scaled, 0, 2, longer_dataset["dataset_metadata"])
+    assert X.shape == (2, LOOKBACK_WINDOW, LOTO_CONFIG["loto6"]["pick_count"], 3)
+
+
+def test_settransformer_model_forward_shape_and_probability_range():
+    model = build_prob_model(
+        input_shape=(LOOKBACK_WINDOW, LOTO_CONFIG["loto6"]["pick_count"], 3),
+        max_num=LOTO_CONFIG["loto6"]["max_num"],
+        model_variant="settransformer",
+        compile_model=False,
+    )
+    outputs = model(
+        tf.convert_to_tensor(
+            np.random.rand(2, LOOKBACK_WINDOW, LOTO_CONFIG["loto6"]["pick_count"], 3).astype(np.float32)
+        ),
+        training=False,
+    ).numpy()
+
+    assert outputs.shape == (2, LOTO_CONFIG["loto6"]["max_num"])
+    assert float(outputs.min()) >= 0.0
+    assert float(outputs.max()) <= 1.0
+
+
+def test_settransformer_and_deepsets_same_input_shape():
+    """Both set-based variants must accept the same input tensor shape."""
+    input_shape = (LOOKBACK_WINDOW, LOTO_CONFIG["loto6"]["pick_count"], 3)
+    max_num = LOTO_CONFIG["loto6"]["max_num"]
+    x = tf.convert_to_tensor(np.random.rand(1, *input_shape).astype(np.float32))
+    for variant in ("deepsets", "settransformer"):
+        model = build_prob_model(input_shape=input_shape, max_num=max_num, model_variant=variant, compile_model=False)
+        out = model(x, training=False).numpy()
+        assert out.shape == (1, max_num), f"{variant} output shape mismatch"

@@ -2,7 +2,7 @@
 
 ## walk-forward (rolling-origin)
 - 評価対象は draw 単位の時系列サンプルで、各サンプルは直近 `LOOKBACK_WINDOW` 回を入力、次回 draw の multi-hot を正解とする。
-- 入力表現は 3 系統ある。`legacy` は既存の tabular 特徴、`multihot` は 1 draw を `max_num` 次元 multi-hot とし各番号に `hit / frequency / gap` を付与した時系列、`deepsets` は 1 draw を当選番号の集合として扱い各 element に `number_norm / frequency / gap` を付与して shared encoder -> mean pooling -> lookback LSTM に渡す。
+- 入力表現は 4 系統ある。`legacy` は既存の tabular 特徴、`multihot` は 1 draw を `max_num` 次元 multi-hot とし各番号に `hit / frequency / gap` を付与した時系列、`deepsets` は 1 draw を当選番号の集合として扱い各 element に `number_norm / frequency / gap` を付与して shared encoder -> mean pooling -> lookback LSTM に渡す。`settransformer` は `deepsets` と同一 element feature を用いつつ、pooling 前に SetAttentionBlock (SAB) で集合内要素の相互作用を付加した上で lookback LSTM に渡す。
 - `legacy_holdout` は従来互換の単発 split。
 - `walk_forward` は expanding-window 方式で train を広げ、固定長 test window を複数 fold で評価する。
 - `legacy_holdout` と `walk_forward` はどちらも leak-free 評価で、scaler は train 期間だけで fit する。
@@ -35,6 +35,10 @@
   - `deepsets_vs_best_static`
   - `deepsets_vs_legacy`
   - `deepsets_vs_multihot`
+  - `settransformer_vs_best_static`
+  - `settransformer_vs_legacy`
+  - `settransformer_vs_multihot`（補助）
+  - `settransformer_vs_deepsets`（補助）
 - 主比較は proper scoring rule である logloss を使う。Top-k は補助指標として解釈する。
 
 ## 採用判定ルール
@@ -68,13 +72,20 @@
 - online baseline は test 実測を使うが、予測後にのみ状態更新する。
 
 ## preset の使い分け
-- 通常: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets`
-- calibration 比較つき: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic`
+- 通常: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer`
+- calibration 比較つき: `venv/bin/python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic`
 - 短時間確認: `venv/bin/python train_prob_model.py --loto_type loto6 --preset fast`
-- 最小 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets`
-- deepsets 保存 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant deepsets --evaluation_model_variants legacy,multihot,deepsets --skip_final_train`
+- 最小 smoke (全 4 variant): `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer`
+- settransformer vs deepsets 集中比較 (smoke): `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,deepsets,settransformer --skip_final_train`
+- deepsets 保存 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant deepsets --evaluation_model_variants legacy,multihot,deepsets,settransformer --skip_final_train`
+- settransformer 保存 smoke: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --model_variant settransformer --evaluation_model_variants legacy,deepsets,settransformer --skip_final_train`
 - 評価だけ更新したい場合: `venv/bin/python train_prob_model.py --loto_type loto6 --preset smoke --skip_final_train`
-- 実験追跡込み: `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"deepsets","evaluation_model_variants":"legacy,multihot,deepsets","refresh_data":false,"skip_final_train":true}'`
+- 実験追跡込み: `venv/bin/python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"deepsets","evaluation_model_variants":"legacy,multihot,deepsets,settransformer","refresh_data":false,"skip_final_train":true}'`
+
+## settransformer vs deepsets 比較の読み方
+- smoke では 0-epoch のため logloss 差は無意味。統計的優位の判定も hold になるのが通常。
+- より安定した比較には `preset fast` または `preset default` で `evaluation_model_variants legacy,deepsets,settransformer` を指定し、`settransformer_vs_deepsets` の `bootstrap_ci.upper` と `permutation_test.p_value` を確認する。
+- `input_summary.pooling` が `mean` (deepsets) vs `mean_after_attention` (settransformer) で、それ以外の構造は同一。純粋な attention 有無の効果が分離できる設計。
 
 ## 再現性メモ
 - `eval_report_*.json` と `manifest_*.json` には `data_fingerprint` / `training_context` / `runtime_environment` を保存する。

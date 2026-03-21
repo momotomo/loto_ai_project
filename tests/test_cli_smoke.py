@@ -13,6 +13,7 @@ ROOT_FILES = [
     "config.py",
     "data_collector.py",
     "evaluation_statistics.py",
+    "model_layers.py",
     "model_variants.py",
     "predict.py",
     "report_utils.py",

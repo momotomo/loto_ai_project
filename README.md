@@ -1,20 +1,22 @@
 # loto_ai_project
 
-宝くじ予測の差は極小という前提で、確率出力そのものより「モデル設計の妥当性」と「更新判断の客観性」を重視するプロジェクトです。現行は `legacy` の tabular LSTM を保守的な既定経路として残しつつ、draw を multi-hot 時系列として扱う `multihot` と、draw 内の番号集合を shared encoder -> mean pooling -> 時系列 head で扱う `deepsets` variant を比較します。評価は proper scoring rule・統計的検定・post-hoc calibration 比較で行います。主な成果物は `eval_report_*.json`、`manifest_*.json`、`prediction_history_*.json`、`*_prob.keras`、`*_scaler.pkl`、必要時の `*_calibrator.json` です。
+宝くじ予測の差は極小という前提で、確率出力そのものより「モデル設計の妥当性」と「更新判断の客観性」を重視するプロジェクトです。現行は `legacy` の tabular LSTM を保守的な既定経路として残しつつ、draw を multi-hot 時系列として扱う `multihot`、draw 内番号集合を shared encoder -> mean pooling で扱う `deepsets`、さらに attention で集合内要素の相互作用を表現する `settransformer` variant を比較します。評価は proper scoring rule・統計的検定・post-hoc calibration 比較で行います。主な成果物は `eval_report_*.json`、`manifest_*.json`、`prediction_history_*.json`、`*_prob.keras`、`*_scaler.pkl`、必要時の `*_calibrator.json` です。
 
 ## 主要コマンド
 - `python data_collector.py --loto_type loto6`
-- `python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets`
-- `python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic`
-- `python train_prob_model.py --loto_type loto6 --preset smoke --model_variant deepsets --evaluation_model_variants legacy,multihot,deepsets --skip_final_train`
-- `python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"deepsets","evaluation_model_variants":"legacy,multihot,deepsets","refresh_data":false,"skip_final_train":true}'`
-- `python update_system.py --loto_type loto6 --train_preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets --skip_data_refresh`
+- `python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer`
+- `python train_prob_model.py --loto_type loto6 --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic`
+- `python train_prob_model.py --loto_type loto6 --preset smoke --model_variant deepsets --evaluation_model_variants legacy,multihot,deepsets,settransformer --skip_final_train`
+- `python train_prob_model.py --loto_type loto6 --preset smoke --model_variant legacy --evaluation_model_variants legacy,deepsets,settransformer --skip_final_train`
+- `python scripts/run_experiment.py --config-json '{"loto_type":"loto6","preset":"smoke","seed":42,"model_variant":"deepsets","evaluation_model_variants":"legacy,multihot,deepsets,settransformer","refresh_data":false,"skip_final_train":true}'`
+- `python update_system.py --loto_type loto6 --train_preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer --skip_data_refresh`
 - `streamlit run app.py`
 
 ## モデル variant
 - `legacy`: `num1..numN` と既存集計特徴をそのまま tabular に並べた従来ルート。既定の保存 artifact は当面これを使います。
 - `multihot`: 1 draw を `max_num` 次元 multi-hot とし、番号ごとの `hit / frequency / gap` を各 timestep に持つ新ルートです。
 - `deepsets`: 1 draw を「当選番号の集合」として扱い、各番号 element に `number_norm / frequency / gap` を持たせ、shared encoder と mean pooling で draw embedding を作ってから lookback 系列を統合します。
+- `settransformer`: `deepsets` と同一の element feature (`number_norm / frequency / gap`) を使いつつ、mean pooling 前に SetAttentionBlock (SAB: Multi-Head Self-Attention, 2 heads, key_dim=8) で集合内要素の相互作用を付加します。deepsets との唯一の構造差分が attention 有無なので公平な比較が可能です。カスタムレイヤー (`model_layers.py`) として `@register_keras_serializable` 登録済みで `load_model` が custom_objects 不要で動作します。
 - calibration は opt-in で、`temperature` と `isotonic` を `evaluation_calibration_methods` に含めて比較し、保存する production artifact は `saved_calibration_method` で別管理します。
 - `eval_report_*.json` には各 variant の `walk_forward` 結果、bootstrap CI、paired permutation test、pre/post calibration 指標、採用判定 summary を保存します。
 

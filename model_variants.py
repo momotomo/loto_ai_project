@@ -6,15 +6,24 @@ from config import LOOKBACK_WINDOW, LOTO_CONFIG
 LEGACY_MODEL_VARIANT = "legacy"
 MULTIHOT_MODEL_VARIANT = "multihot"
 DEEPSETS_MODEL_VARIANT = "deepsets"
+SETTRANSFORMER_MODEL_VARIANT = "settransformer"
 DEFAULT_MODEL_VARIANT = LEGACY_MODEL_VARIANT
-MODEL_VARIANT_CHOICES = (LEGACY_MODEL_VARIANT, MULTIHOT_MODEL_VARIANT, DEEPSETS_MODEL_VARIANT)
+MODEL_VARIANT_CHOICES = (
+    LEGACY_MODEL_VARIANT,
+    MULTIHOT_MODEL_VARIANT,
+    DEEPSETS_MODEL_VARIANT,
+    SETTRANSFORMER_MODEL_VARIANT,
+)
 MODEL_VARIANT_LABELS = {
     LEGACY_MODEL_VARIANT: "Legacy Tabular LSTM",
     MULTIHOT_MODEL_VARIANT: "Multi-Hot Temporal LSTM",
     DEEPSETS_MODEL_VARIANT: "Deep Sets Sequence Encoder",
+    SETTRANSFORMER_MODEL_VARIANT: "Set Transformer Sequence Encoder",
 }
 MULTIHOT_FEATURE_CHANNELS = ("hit", "frequency", "gap")
 DEEPSETS_ELEMENT_FEATURE_CHANNELS = ("number_norm", "frequency", "gap")
+# Set Transformer uses the same element features as Deep Sets for fair comparison
+SETTRANSFORMER_ELEMENT_FEATURE_CHANNELS = DEEPSETS_ELEMENT_FEATURE_CHANNELS
 
 
 def resolve_model_variant(value):
@@ -157,6 +166,62 @@ def build_deepsets_row_features(df, pick_count, max_num):
     }
 
 
+def build_settransformer_row_features(df, pick_count, max_num):
+    """Build element-level features for the Set Transformer variant.
+
+    Uses the same per-element features as Deep Sets (number_norm, frequency,
+    gap) so the two variants are directly comparable.  The only difference is
+    in the model architecture: Set Transformer adds a self-attention block
+    before the mean pooling step so that elements within the same draw can
+    interact.
+    """
+    target_numbers = df[get_target_columns(pick_count)].to_numpy(dtype=np.int32)
+    sorted_numbers = np.sort(target_numbers, axis=1)
+    planes = build_number_level_feature_planes(target_numbers, max_num)
+    row_indices = np.arange(len(df))[:, None]
+    selected_indices = sorted_numbers - 1
+    number_norm = (sorted_numbers.astype(np.float32) - 1.0) / max(float(max_num - 1), 1.0)
+    frequency = planes["frequency"][row_indices, selected_indices]
+    gap = planes["gap"][row_indices, selected_indices]
+    element_tensor = np.stack([number_norm, frequency, gap], axis=-1).astype(np.float32)
+    raw_features = element_tensor.reshape(len(df), -1)
+    # Reuse deepsets feature column names – same layout, same scaler logic
+    feature_cols = build_deepsets_feature_names(pick_count)
+    input_summary = {
+        "prepared_input_rank": 4,
+        "lookback_window": int(LOOKBACK_WINDOW),
+        "set_cardinality": int(pick_count),
+        "element_feature_count": int(element_tensor.shape[-1]),
+        "flattened_feature_count": int(raw_features.shape[1]),
+        "scaler_feature_count": int(element_tensor.shape[-1]),
+        "pooling": "mean_after_attention",
+        "temporal_head": "lstm",
+        "element_feature_channels": list(SETTRANSFORMER_ELEMENT_FEATURE_CHANNELS),
+        "attention_block_count": 1,
+        "attention_hidden_dim": 16,
+        "attention_num_heads": 2,
+        "attention_key_dim": 8,
+    }
+    return raw_features, feature_cols, {
+        "model_variant": SETTRANSFORMER_MODEL_VARIANT,
+        "feature_strategy": "set_sequence_settransformer",
+        "feature_channels": list(SETTRANSFORMER_ELEMENT_FEATURE_CHANNELS),
+        "raw_feature_count": int(raw_features.shape[1]),
+        "row_shape": [int(pick_count), int(element_tensor.shape[-1])],
+        "set_cardinality": int(pick_count),
+        "element_feature_count": int(element_tensor.shape[-1]),
+        "scaler_feature_count": int(element_tensor.shape[-1]),
+        "prepared_input_rank": 4,
+        "pooling": "mean_after_attention",
+        "lookback_integration": "sequence_lstm",
+        "attention_block_count": 1,
+        "attention_hidden_dim": 16,
+        "attention_num_heads": 2,
+        "attention_key_dim": 8,
+        "input_summary": input_summary,
+    }
+
+
 def build_row_features(df, loto_type, model_variant):
     config = LOTO_CONFIG[loto_type]
     resolved_variant = resolve_model_variant(model_variant)
@@ -164,6 +229,8 @@ def build_row_features(df, loto_type, model_variant):
         return build_legacy_row_features(df, config["pick_count"])
     if resolved_variant == MULTIHOT_MODEL_VARIANT:
         return build_multihot_row_features(df, config["pick_count"], config["max_num"])
+    if resolved_variant == SETTRANSFORMER_MODEL_VARIANT:
+        return build_settransformer_row_features(df, config["pick_count"], config["max_num"])
     return build_deepsets_row_features(df, config["pick_count"], config["max_num"])
 
 

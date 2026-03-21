@@ -13,6 +13,9 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.layers import AveragePooling2D, BatchNormalization, Dense, Dropout, Input, LSTM, Reshape
 from tensorflow.keras.models import Model, Sequential
 
+import model_layers  # noqa: F401 – registers SetAttentionBlock into Keras registry
+from model_layers import SetAttentionBlock
+
 from artifact_utils import build_data_fingerprint, collect_file_metadata, collect_runtime_environment
 from calibration_utils import (
     CALIBRATION_METHOD_CHOICES,
@@ -46,6 +49,7 @@ from model_variants import (
     LEGACY_MODEL_VARIANT,
     MODEL_VARIANT_CHOICES,
     MULTIHOT_MODEL_VARIANT,
+    SETTRANSFORMER_MODEL_VARIANT,
     build_model_samples_from_scaled_rows,
     create_multi_hot as build_target_multi_hot,
     fit_scaler_for_variant,
@@ -482,9 +486,76 @@ def build_deepsets_prob_model(input_shape, max_num, compile_model=True):
     return model
 
 
+def build_settransformer_prob_model(input_shape, max_num, compile_model=True):
+    """Lightweight Set Transformer variant.
+
+    Architecture (per draw):
+      1. Element projection Dense → hidden_dim=16
+      2. SetAttentionBlock (1 SAB, 2 heads, key_dim=8) – elements interact
+      3. Mean pooling over set dimension (same as DeepSets after this point)
+      4. LSTM temporal head (same configuration as DeepSets)
+      5. Dense output head → sigmoid
+
+    The only structural difference vs. DeepSets is step 2: elements within
+    each draw can exchange information through self-attention before being
+    collapsed into a single draw embedding.
+
+    Design rationale (lightweight / Kaggle-free-tier):
+      - hidden_dim=16, num_heads=2, key_dim=8 keeps the attention small.
+      - Single SAB block avoids excessive parameter growth.
+      - Mean pooling after SAB (instead of PMA) keeps the readout simple.
+      - LSTM temporal head is shared with DeepSets so that draw-level and
+        temporal-level comparisons are fair.
+    """
+    lookback_window, set_cardinality, _ = input_shape
+    hidden_dim = 16
+    num_heads = 2
+    key_dim = 8  # hidden_dim // num_heads
+
+    inputs = Input(shape=input_shape, name="settransformer_input")
+
+    # 1. Project each element to hidden_dim
+    # input:  (batch, lookback, set_cardinality, element_features)
+    # output: (batch, lookback, set_cardinality, hidden_dim)
+    x = Dense(hidden_dim, activation="relu", name="element_proj_dense")(inputs)
+
+    # 2. Self-attention block: elements in the same draw interact
+    # shape unchanged: (batch, lookback, set_cardinality, hidden_dim)
+    x = SetAttentionBlock(num_heads=num_heads, key_dim=key_dim, name="set_attention_block")(x)
+
+    # 3. Mean pooling over set dimension
+    # (batch, lookback, set_cardinality, hidden_dim) → (batch, lookback, 1, hidden_dim)
+    x = AveragePooling2D(
+        pool_size=(1, set_cardinality),
+        strides=(1, set_cardinality),
+        name="set_pooling_mean",
+    )(x)
+
+    # 4. Reshape to sequence: (batch, lookback, hidden_dim)
+    x = Reshape((lookback_window, hidden_dim), name="pooled_draw_embeddings")(x)
+
+    # 5. LSTM temporal head (same as DeepSets)
+    x = LSTM(48, return_sequences=True, name="sequence_lstm_1")(x)
+    x = BatchNormalization(name="sequence_batchnorm_1")(x)
+    x = Dropout(0.2, name="sequence_dropout_1")(x)
+    x = LSTM(24, name="sequence_lstm_2")(x)
+    x = BatchNormalization(name="sequence_batchnorm_2")(x)
+    x = Dropout(0.2, name="sequence_dropout_2")(x)
+    x = Dense(32, activation="relu", name="prediction_head_dense")(x)
+    outputs = Dense(max_num, activation="sigmoid", name="number_probabilities")(x)
+
+    model = Model(inputs=inputs, outputs=outputs, name="settransformer_sequence_model")
+    if compile_model:
+        model.compile(optimizer="adam", loss="binary_crossentropy")
+    return model
+
+
 def build_prob_model(input_shape, max_num, model_variant=DEFAULT_MODEL_VARIANT, dataset_metadata=None, compile_model=True):
-    if resolve_model_variant(model_variant) == DEEPSETS_MODEL_VARIANT:
+    resolved = resolve_model_variant(model_variant)
+    if resolved == DEEPSETS_MODEL_VARIANT:
         return build_deepsets_prob_model(input_shape, max_num, compile_model=compile_model)
+    if resolved == SETTRANSFORMER_MODEL_VARIANT:
+        return build_settransformer_prob_model(input_shape, max_num, compile_model=compile_model)
 
     model = Sequential(
         [
@@ -1269,7 +1340,9 @@ def build_training_context(args, loto_type, feature_cols, pick_count, max_num, d
         "feature_strategy": dataset_metadata.get("feature_strategy"),
         "feature_channels": dataset_metadata.get("feature_channels"),
         "model_family": (
-            "deepsets_sequence" if args.model_variant == DEEPSETS_MODEL_VARIANT else "temporal_lstm"
+            "deepsets_sequence" if args.model_variant == DEEPSETS_MODEL_VARIANT
+            else "settransformer_sequence" if args.model_variant == SETTRANSFORMER_MODEL_VARIANT
+            else "temporal_lstm"
         ),
         "lookback_window": int(LOOKBACK_WINDOW),
         "pick_count": int(pick_count),
@@ -1311,7 +1384,11 @@ def build_model_variant_payload(variant_name, dataset, legacy_holdout, walk_forw
         "feature_strategy": dataset["dataset_metadata"].get("feature_strategy"),
         "feature_channels": dataset["dataset_metadata"].get("feature_channels"),
         "feature_column_count": len(dataset["feature_cols"]),
-        "model_family": "deepsets_sequence" if variant_name == DEEPSETS_MODEL_VARIANT else "temporal_lstm",
+        "model_family": (
+            "deepsets_sequence" if variant_name == DEEPSETS_MODEL_VARIANT
+            else "settransformer_sequence" if variant_name == SETTRANSFORMER_MODEL_VARIANT
+            else "temporal_lstm"
+        ),
         "input_summary": input_summary,
         "set_pooling": input_summary.get("pooling"),
         "lookback_integration": dataset["dataset_metadata"].get("lookback_integration"),
@@ -1672,6 +1749,35 @@ def build_statistical_tests(
             seed=seed,
         )
 
+    # Set Transformer supplementary comparisons
+    if SETTRANSFORMER_MODEL_VARIANT in per_variant_predictions:
+        if MULTIHOT_MODEL_VARIANT in per_variant_predictions:
+            comparisons["settransformer_vs_multihot"] = build_variant_comparison_summary(
+                candidate_variant=SETTRANSFORMER_MODEL_VARIANT,
+                reference_name=MULTIHOT_MODEL_VARIANT,
+                candidate_losses=per_variant_predictions[SETTRANSFORMER_MODEL_VARIANT]["losses"],
+                reference_losses=per_variant_predictions[MULTIHOT_MODEL_VARIANT]["losses"],
+                candidate_calibration_method=per_variant_predictions[SETTRANSFORMER_MODEL_VARIANT]["calibration_method"],
+                reference_calibration_method=per_variant_predictions[MULTIHOT_MODEL_VARIANT]["calibration_method"],
+                alpha=alpha,
+                bootstrap_samples=bootstrap_samples,
+                permutation_samples=permutation_samples,
+                seed=seed,
+            )
+        if DEEPSETS_MODEL_VARIANT in per_variant_predictions:
+            comparisons["settransformer_vs_deepsets"] = build_variant_comparison_summary(
+                candidate_variant=SETTRANSFORMER_MODEL_VARIANT,
+                reference_name=DEEPSETS_MODEL_VARIANT,
+                candidate_losses=per_variant_predictions[SETTRANSFORMER_MODEL_VARIANT]["losses"],
+                reference_losses=per_variant_predictions[DEEPSETS_MODEL_VARIANT]["losses"],
+                candidate_calibration_method=per_variant_predictions[SETTRANSFORMER_MODEL_VARIANT]["calibration_method"],
+                reference_calibration_method=per_variant_predictions[DEEPSETS_MODEL_VARIANT]["calibration_method"],
+                alpha=alpha,
+                bootstrap_samples=bootstrap_samples,
+                permutation_samples=permutation_samples,
+                seed=seed,
+            )
+
     return {
         "metric": "per_draw_logloss",
         "test_source": "walk_forward_predictions",
@@ -1737,9 +1843,18 @@ def build_adoption_decision(
             )
         beats_multihot_with_ci = None
         beats_multihot_with_p_value = None
-        if variant_name == DEEPSETS_MODEL_VARIANT and MULTIHOT_MODEL_VARIANT in calibration_selections:
+        if variant_name in (DEEPSETS_MODEL_VARIANT, SETTRANSFORMER_MODEL_VARIANT) and MULTIHOT_MODEL_VARIANT in calibration_selections:
+            effective_multihot_key = multihot_key if multihot_key in comparisons else f"{variant_name}_vs_multihot"
             beats_multihot_with_ci, beats_multihot_with_p_value = evaluate_statistical_guardrail(
-                comparisons.get(multihot_key) or comparisons.get("deepsets_vs_multihot"),
+                comparisons.get(effective_multihot_key),
+                alpha,
+            )
+
+        beats_deepsets_with_ci = None
+        beats_deepsets_with_p_value = None
+        if variant_name == SETTRANSFORMER_MODEL_VARIANT and DEEPSETS_MODEL_VARIANT in calibration_selections:
+            beats_deepsets_with_ci, beats_deepsets_with_p_value = evaluate_statistical_guardrail(
+                comparisons.get("settransformer_vs_deepsets"),
                 alpha,
             )
 
@@ -1804,12 +1919,15 @@ def build_adoption_decision(
                 "legacy": legacy_key if variant_name != LEGACY_MODEL_VARIANT and LEGACY_MODEL_VARIANT in calibration_selections else None,
             },
             "optional_comparisons": {
-                "multihot": "deepsets_vs_multihot" if variant_name == DEEPSETS_MODEL_VARIANT else None,
+                "multihot": f"{variant_name}_vs_multihot" if variant_name in (DEEPSETS_MODEL_VARIANT, SETTRANSFORMER_MODEL_VARIANT) else None,
+                "deepsets": "settransformer_vs_deepsets" if variant_name == SETTRANSFORMER_MODEL_VARIANT else None,
             },
             "flags": {
                 **required_flags,
                 "beats_multihot_with_ci": beats_multihot_with_ci,
                 "beats_multihot_with_p_value": beats_multihot_with_p_value,
+                "beats_deepsets_with_ci": beats_deepsets_with_ci,
+                "beats_deepsets_with_p_value": beats_deepsets_with_p_value,
             },
             "should_promote": should_promote,
             "reason_summary": local_reason_summary,
