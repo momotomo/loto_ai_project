@@ -89,9 +89,11 @@ if str(REPO_ROOT) not in sys.path:
 from campaign_manager import (  # noqa: E402
     append_campaign_to_history,
     build_campaign_entry,
+    compute_recommendation_stability,
     load_campaign_history,
     save_campaign_artifacts,
 )
+from governance_layer import save_governance_artifacts  # noqa: E402
 from campaign_profiles import (  # noqa: E402
     VALID_PROFILE_NAMES,
     list_profiles,
@@ -567,6 +569,18 @@ def main() -> None:
     for name, path in history_paths.items():
         print(f"  {name}: {path}")
 
+    # Generate governance artifacts
+    print("\n--- Generating governance artifacts ---")
+    stability = compute_recommendation_stability(history)
+    governance_paths = save_governance_artifacts(
+        history,
+        stability,
+        data_dir=data_dir,
+        latest_recommendation=recommendation,
+    )
+    for name, path in governance_paths.items():
+        print(f"  {name}: {path}")
+
     # Human-readable summary
     rec = recommendation
     print(f"\n{'='*60}")
@@ -579,11 +593,14 @@ def main() -> None:
         print(f"  blocker: {b}")
 
     print(f"\n=== Read first ===")
+    gov_path = governance_paths.get("governance_report.md")
+    if gov_path:
+        print(f"  Governance report: {gov_path}")
     diff_path = history_paths.get("campaign_diff_report.md")
     if diff_path:
-        print(f"  Diff report:     {diff_path}")
-    print(f"  Evidence pack:   {campaign_dir / 'cross_loto_report.md'}")
-    print(f"  History:         {history_paths.get('campaign_history.json')}")
+        print(f"  Diff report:       {diff_path}")
+    print(f"  Evidence pack:     {campaign_dir / 'cross_loto_report.md'}")
+    print(f"  History:           {history_paths.get('campaign_history.json')}")
     print()
 
 

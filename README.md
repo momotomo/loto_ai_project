@@ -43,14 +43,16 @@ python scripts/run_campaign.py --campaign_name 2026-03-21_full --profile archcom
 ```
 
 Campaign 出力:
-- `campaigns/<campaign_name>/cross_loto_report.md` — evidence pack（まず読む）
-- `campaigns/<campaign_name>/campaign_metadata.json` — profile・seeds・timing
-- `campaigns/<campaign_name>/cross_loto_summary.json` / `recommendation.json` — raw JSON
-- `data/campaign_diff_report.md` — 前回比較からの変化（**最初に確認する**）
+- `data/governance_report.md` — 全 governance シグナルをまとめた運用レポート（**最初に読む**）
+- `data/trend_summary.md` — 直近 N campaign の傾向（rank・logloss・pairwise 推移）
+- `data/regression_alert.md` — 悪化シグナル（alert_level: none/low/medium/high）
+- `data/promotion_gate.md` — 昇格検討 gate（gate_status: red/yellow/green）
+- `data/campaign_diff_report.md` — 前回比較からの変化
 - `data/campaign_history.json` — 全 campaign 履歴 + recommendation stability
 - `data/campaign_history.csv` — 表計算用履歴
+- `campaigns/<campaign_name>/cross_loto_report.md` — evidence pack（詳細確認用）
 
-**読む順序:** `data/campaign_diff_report.md` → `data/campaign_history.json` → `campaigns/<name>/cross_loto_report.md`
+**読む順序:** `data/governance_report.md` → `data/campaign_diff_report.md` → `campaigns/<name>/cross_loto_report.md`
 
 ### Campaign profile の違い
 
@@ -103,7 +105,8 @@ python scripts/run_cross_loto.py --report_only
 - `scripts/run_cross_loto.py` は複数 loto_type にわたって同じ比較を実行し `data/cross_loto_summary.json` と `data/recommendation.json` に集計する。新しい variant を試す前にまずこれで横断傾向を把握することを推奨する。
 - `scripts/run_campaign.py` は named campaign として cross-loto 比較を実行し、`campaigns/<name>/` へ全 artifact を保存しつつ `data/campaign_history.json` を更新する。単発比較より campaign runner を優先する。
 - `campaign_profiles.py` は archcomp_lite / archcomp / archcomp_full の 3 段階プロファイルを定義。epochs・seeds・loto_types を一括管理する。
-- `campaign_manager.py` は campaign 履歴管理・推奨安定性集計・diff report 生成を担当する。
+- `campaign_manager.py` は campaign 履歴管理・推奨安定性集計（settransformer/deepsets シグナル streak 含む）・diff report 生成を担当する。
+- `governance_layer.py` は trend summary / regression alert / promotion gate / governance report の 4 artifact を生成する governance 層。campaign 実行後に自動呼び出される。
 - `manifest_*.json` と `eval_report_*.json` には `data_fingerprint`、`training_context`、`runtime_environment` が入り、data hash / preprocessing version / seed / preset / model variant / calibration method / Python / dependency version を確認できます。
 - `smoke` preset は plumbing 確認用の 0-epoch 構成。`archcomp` preset は deepsets vs settransformer の architecture 比較専用 (eval_epochs=6, folds=3)。
 

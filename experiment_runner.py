@@ -45,6 +45,7 @@ TRACKED_SOURCE_FILES = [
     "calibration_utils.py",
     "campaign_profiles.py",
     "campaign_manager.py",
+    "governance_layer.py",
     "comparison_summary.py",
     "cross_loto_summary.py",
     "cross_loto_report.py",

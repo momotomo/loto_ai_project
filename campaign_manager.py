@@ -27,6 +27,8 @@ Schema overview (campaign_history.json):
     "consecutive_same_challenger": 3,
     "consecutive_keep_production": 3,
     "consecutive_run_more_seeds": 0,
+    "consecutive_positive_signal_for_settransformer": 0,
+    "consecutive_positive_signal_for_deepsets": 1,
   },
   "campaigns": [
     {
@@ -170,6 +172,8 @@ def compute_recommendation_stability(history: list[dict[str, Any]]) -> dict[str,
             "consecutive_same_challenger": 0,
             "consecutive_keep_production": 0,
             "consecutive_run_more_seeds": 0,
+            "consecutive_positive_signal_for_settransformer": 0,
+            "consecutive_positive_signal_for_deepsets": 0,
         }
 
     last_action = history[-1].get("recommended_next_action")
@@ -189,6 +193,26 @@ def compute_recommendation_stability(history: list[dict[str, Any]]) -> dict[str,
     consecutive_keep_production = _count_consecutive("keep_production_as_is", True)
     consecutive_run_more_seeds = _count_consecutive("recommended_next_action", "run_more_seeds")
 
+    # Per-variant pairwise positive signal streaks.
+    # "Positive signal for settransformer" = whether_to_try_pma_or_isab_next is True
+    # (triggered when settransformer_vs_deepsets both_pass_rate >= 0.5).
+    consecutive_positive_signal_for_settransformer = 0
+    for entry in reversed(history):
+        if entry.get("whether_to_try_pma_or_isab_next", False):
+            consecutive_positive_signal_for_settransformer += 1
+        else:
+            break
+
+    # "Positive signal for deepsets" = deepsets_vs_legacy both_pass_count > 0
+    consecutive_positive_signal_for_deepsets = 0
+    for entry in reversed(history):
+        pw = entry.get("key_pairwise_signals") or {}
+        ds_vs_legacy = pw.get("deepsets_vs_legacy") or {}
+        if int(ds_vs_legacy.get("both_pass_count") or 0) > 0:
+            consecutive_positive_signal_for_deepsets += 1
+        else:
+            break
+
     return {
         "total_campaigns": len(history),
         "latest_action": last_action,
@@ -197,6 +221,8 @@ def compute_recommendation_stability(history: list[dict[str, Any]]) -> dict[str,
         "consecutive_same_challenger": consecutive_same_challenger,
         "consecutive_keep_production": consecutive_keep_production,
         "consecutive_run_more_seeds": consecutive_run_more_seeds,
+        "consecutive_positive_signal_for_settransformer": consecutive_positive_signal_for_settransformer,
+        "consecutive_positive_signal_for_deepsets": consecutive_positive_signal_for_deepsets,
     }
 
 
