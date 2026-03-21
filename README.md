@@ -12,6 +12,18 @@
 - `python update_system.py --loto_type loto6 --train_preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer --skip_data_refresh`
 - `streamlit run app.py`
 
+### deepsets vs settransformer 比較 (multi-seed)
+```bash
+python scripts/run_multi_seed.py \
+    --loto_type loto6 \
+    --preset archcomp \
+    --seeds 42,123,456 \
+    --model_variant legacy \
+    --evaluation_model_variants legacy,multihot,deepsets,settransformer \
+    --run_root runs
+```
+結果: `data/comparison_summary_loto6.json` に variant ごとの logloss mean/std と pairwise 比較が集計される。詳細は `docs/EVALUATION.md` の `architecture comparison preset` 節を参照。
+
 ## モデル variant
 - `legacy`: `num1..numN` と既存集計特徴をそのまま tabular に並べた従来ルート。既定の保存 artifact は当面これを使います。
 - `multihot`: 1 draw を `max_num` 次元 multi-hot とし、番号ごとの `hit / frequency / gap` を各 timestep に持つ新ルートです。
@@ -23,8 +35,9 @@
 ## 依存と run tracking
 - `requirements.txt` は direct dependency を固定し、`requirements.lock` は freeze ベースの lock として CI で使います。
 - `scripts/run_experiment.py` は run ごとに `runs/` へ config・source hash・artifact copy・artifact hash を保存します。
+- `scripts/run_multi_seed.py` は複数 seed で experiment を実行し `data/comparison_summary_{loto_type}.json` に集計する。
 - `manifest_*.json` と `eval_report_*.json` には `data_fingerprint`、`training_context`、`runtime_environment` が入り、data hash / preprocessing version / seed / preset / model variant / calibration method / Python / dependency version を確認できます。
-- `smoke` preset は plumbing 確認用の 0-epoch 構成です。
+- `smoke` preset は plumbing 確認用の 0-epoch 構成。`archcomp` preset は deepsets vs settransformer の architecture 比較専用 (eval_epochs=6, folds=3)。
 
 ## Walk-forward 評価とは
 単発の holdout ではなく、時系列順を保ったまま train 区間を広げ、固定長の test window を複数回ずらして検証する方法です。このリポジトリでは各 fold ごとに scaler を train 期間のみで fit し直し、fold 単位の指標と平均・分散を `eval_report_*.json` に保存します。

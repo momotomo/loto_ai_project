@@ -32,3 +32,9 @@ jobs:
 
       - name: Smoke update_system
         run: python update_system.py --loto_type loto6 --train_preset smoke --model_variant legacy --evaluation_model_variants legacy,multihot,deepsets,settransformer --saved_calibration_method none --evaluation_calibration_methods none,temperature,isotonic --skip_final_train --skip_data_refresh --seed 42
+
+      - name: Verify archcomp preset is registered
+        run: python -c "from train_prob_model import PRESET_CONFIGS; assert 'archcomp' in PRESET_CONFIGS, 'archcomp preset missing'; p=PRESET_CONFIGS['archcomp']; assert p['eval_epochs'] > 0; print('archcomp preset OK:', p)"
+
+      - name: Verify comparison_summary module imports cleanly
+        run: python -c "from comparison_summary import build_comparison_summary, COMPARISON_SUMMARY_SCHEMA_VERSION; print('comparison_summary OK, schema_version=', COMPARISON_SUMMARY_SCHEMA_VERSION)"

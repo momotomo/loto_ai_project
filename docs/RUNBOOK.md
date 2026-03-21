@@ -103,6 +103,33 @@
   - `runs/<run_id>/run_summary.json`
   - `runs/<run_id>/artifacts/...`
 
+## deepsets vs settransformer を比較したい
+- 症状: smoke での 0-epoch 比較では優劣が分からない。ある程度学習させて公平に比較したい。
+- 対処:
+  1. `archcomp` preset で多 seed 比較を実行する:
+     ```bash
+     venv/bin/python scripts/run_multi_seed.py \
+         --loto_type loto6 \
+         --preset archcomp \
+         --seeds 42,123,456 \
+         --model_variant legacy \
+         --evaluation_model_variants legacy,multihot,deepsets,settransformer \
+         --saved_calibration_method none \
+         --evaluation_calibration_methods none,temperature,isotonic \
+         --run_root runs
+     ```
+  2. 生成された `data/comparison_summary_loto6.json` を確認する:
+     - `variants.deepsets.logloss.mean` vs `variants.settransformer.logloss.mean`
+     - `pairwise_comparisons.settransformer_vs_deepsets.both_pass_count`
+     - `pairwise_comparisons.settransformer_vs_deepsets.ci_wins` / `permutation_wins`
+  3. promote_count が 2/3 以上なら settransformer に対して本番切り替えを検討する。
+- メモ:
+  - `archcomp` preset は production 保存しない前提で設計している（`--skip_final_train` がデフォルト）。
+  - production を変えたい場合は `--no_skip_final_train` を追加するか、通常の `train_prob_model.py` を使う。
+  - 各 seed の run artifact は `runs/<run_id>/` に独立して残る。
+  - comparison summary は `data/comparison_summary_{loto_type}.json` に上書きされる。
+  - 次の variant (PMA / ISAB) を追加する前に、まずこの比較を実施することを推奨する。
+
 ## GitHub Actions からの Kaggle kick 失敗
 - 症状: `.github/workflows/kaggle_kick.yml` が skip 以外で失敗する。
 - 確認:
