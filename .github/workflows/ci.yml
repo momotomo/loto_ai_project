@@ -89,3 +89,55 @@ jobs:
               assert (dp / 'variant_metrics.csv').exists()
           print('--report_only smoke OK')
           "
+
+      - name: Verify campaign_profiles module imports cleanly
+        run: python -c "from campaign_profiles import CAMPAIGN_PROFILES, VALID_PROFILE_NAMES, get_profile, resolve_profile, CAMPAIGN_PROFILE_SCHEMA_VERSION; assert 'archcomp_lite' in CAMPAIGN_PROFILES; assert 'archcomp' in CAMPAIGN_PROFILES; assert 'archcomp_full' in CAMPAIGN_PROFILES; print('campaign_profiles OK, profiles=', VALID_PROFILE_NAMES)"
+
+      - name: Verify campaign_manager module imports cleanly
+        run: python -c "from campaign_manager import build_campaign_entry, compute_recommendation_stability, append_campaign_to_history, load_campaign_history, save_campaign_artifacts, build_diff_report, CAMPAIGN_HISTORY_SCHEMA_VERSION; print('campaign_manager OK, schema_version=', CAMPAIGN_HISTORY_SCHEMA_VERSION)"
+
+      - name: Smoke campaign profile resolution
+        run: |
+          python -c "
+          from campaign_profiles import get_profile, resolve_profile
+          for name in ['archcomp_lite', 'archcomp', 'archcomp_full']:
+              p = get_profile(name)
+              assert 'preset' in p and 'seeds' in p and 'loto_types' in p
+          # Override test
+          p2 = resolve_profile('archcomp', {'seeds': [42]})
+          assert p2['seeds'] == [42] and p2['preset'] == 'archcomp'
+          print('campaign profile resolution OK')
+          "
+
+      - name: Smoke campaign artifact generation
+        run: |
+          python -c "
+          import json, tempfile, pathlib
+          from cross_loto_summary import build_cross_loto_summary, build_recommendation
+          from campaign_manager import build_campaign_entry, append_campaign_to_history, compute_recommendation_stability, save_campaign_artifacts, build_diff_report
+          per_loto = {'loto6': {'schema_version': 1, 'loto_type': 'loto6', 'preset': 'archcomp', 'seeds': [42], 'run_count': 1, 'alpha': 0.05, 'variants': {'legacy': {'run_count': 1, 'logloss': {'mean': 0.3, 'std': 0.0, 'values': [0.3]}, 'brier': {'mean': 0.04, 'std': 0.0, 'values': [0.04]}, 'ece': {'mean': 0.01, 'std': 0.0, 'values': [0.01]}, 'calibration_recommendations': {'none': 1}, 'promote_count': 0, 'hold_count': 1}}, 'pairwise_comparisons': {}}}
+          cs = build_cross_loto_summary(per_loto, ['loto6'], 'archcomp', [42])
+          rec = build_recommendation(cs)
+          e1 = build_campaign_entry('c1', 'archcomp', cs, rec)
+          e2 = build_campaign_entry('c2', 'archcomp', cs, rec)
+          history = append_campaign_to_history([], e1)
+          history = append_campaign_to_history(history, e2)
+          stability = compute_recommendation_stability(history)
+          assert stability['total_campaigns'] == 2
+          diff_md = build_diff_report(e1, e2, stability=stability)
+          assert '## Campaign Overview' in diff_md
+          assert '## Recommendation Change' in diff_md
+          assert '## Recommendation Stability' in diff_md
+          with tempfile.TemporaryDirectory() as d:
+              paths = save_campaign_artifacts(history, data_dir=d)
+              assert pathlib.Path(paths['campaign_history.json']).exists()
+              assert pathlib.Path(paths['campaign_history.csv']).exists()
+              assert pathlib.Path(paths['campaign_diff_report.md']).exists()
+          print('campaign artifact generation OK')
+          "
+
+      - name: Smoke run_campaign --list_profiles
+        run: python scripts/run_campaign.py --list_profiles
+
+      - name: Verify run_campaign CLI help
+        run: python scripts/run_campaign.py --help > /dev/null

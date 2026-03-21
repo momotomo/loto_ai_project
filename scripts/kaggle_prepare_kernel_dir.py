@@ -30,6 +30,8 @@ DATA_EXCLUDE_NAMES = {
     "variant_metrics.csv",
     "pairwise_comparisons.csv",
     "recommendation_summary.csv",
+    # Campaign-specific outputs — not needed by Kaggle kernel
+    "campaign_history.csv",
 }
 
 

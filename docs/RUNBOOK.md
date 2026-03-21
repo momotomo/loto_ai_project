@@ -130,7 +130,49 @@
   - comparison summary は `data/comparison_summary_{loto_type}.json` に上書きされる。
   - 次の variant (PMA / ISAB) を追加する前に、まずこの比較を実施することを推奨する。
 
-## 複数 loto_type を横断して variant を比較したい
+## campaign を使って比較を継続監視したい
+
+- 症状: 比較を 1 回で終わらせず、前回との差分と傾向の変化を追いたい。
+- 対処:
+  1. `scripts/run_campaign.py` で named campaign を実行する:
+     ```bash
+     # プロファイル一覧を確認
+     python scripts/run_campaign.py --list_profiles
+
+     # 標準 archcomp キャンペーンを実行（campaign_name は日付などで一意に）
+     python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile archcomp
+
+     # 軽量確認（fast preset, 2 seeds, loto6 のみ）
+     python scripts/run_campaign.py --campaign_name 2026-03-21_lite --profile archcomp_lite
+
+     # run_more_seeds が ≥3 回続く場合は archcomp_full
+     python scripts/run_campaign.py --campaign_name 2026-03-21_full --profile archcomp_full
+     ```
+  2. **まず diff report を読む**（前回からの変化）:
+     - `data/campaign_diff_report.md` — variant ranking / pairwise 変化・recommendation 変化
+  3. campaign history で stability を確認する:
+     - `data/campaign_history.json` → `recommendation_stability` を参照
+     - `consecutive_same_action >= 3` かつ `run_more_seeds` → `archcomp_full` を実行
+     - `consecutive_same_action >= 2` かつ `consider_promotion` → promotion を慎重に検討
+  4. 今回 campaign の evidence pack を読む:
+     - `campaigns/<campaign_name>/cross_loto_report.md` — 詳細 evidence pack
+     - `campaigns/<campaign_name>/recommendation.json` — next_action
+
+- profile ごとの使い分け:
+  | profile | preset | seeds | loto_types | 用途 |
+  |---------|--------|-------|-----------|------|
+  | `archcomp_lite` | fast | 2 | loto6 のみ | sanity check のみ（決定に使わない） |
+  | `archcomp` | archcomp | 3 | 全 3 種 | 標準 campaign（既定） |
+  | `archcomp_full` | default | 5 | 全 3 種 | `run_more_seeds` が続く場合 |
+
+- メモ:
+  - campaign 間の artifact は `campaigns/<name>/` に独立保存される（上書きなし）
+  - `--skip_final_train` が既定 True のため production artifact は変わらない
+  - campaign_name が既存の場合はエラーで停止するので一意な名前を使うこと
+  - history は `data/campaign_history.json` に蓄積される
+  - campaign_diff_report.md は最新 2 campaign 間の差分のみ
+
+## 複数 loto_type を横断して variant を比較したい（ad-hoc）
 
 - 症状: loto6 だけで比較したが、miniloto / loto7 での傾向が不明。cross-loto で全体傾向を把握したい。
 - 対処:
@@ -168,6 +210,7 @@
   - cross-loto summary は `data/cross_loto_summary.json` に上書きされる。
   - `--skip_final_train` が既定 True のため、比較実行で production artifact が上書きされることはない。
   - 新しい variant を追加する前に必ずこの cross-loto summary を確認すること。
+  - **継続監視が目的なら `scripts/run_campaign.py` の使用を優先すること。**
 
 ## GitHub Actions からの Kaggle kick 失敗
 - 症状: `.github/workflows/kaggle_kick.yml` が skip 以外で失敗する。

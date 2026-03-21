@@ -24,7 +24,43 @@ python scripts/run_multi_seed.py \
 ```
 結果: `data/comparison_summary_loto6.json` に variant ごとの logloss mean/std と pairwise 比較が集計される。
 
-### cross-loto 横断比較 (全 loto_type)
+### Campaign による継続的比較 (推奨)
+
+比較を 1 回で終わらせず、履歴を積み重ねて傾向を判断するには campaign runner を使います。
+
+```bash
+# 利用可能な campaign profile 一覧
+python scripts/run_campaign.py --list_profiles
+
+# 標準的な archcomp キャンペーンを実行
+python scripts/run_campaign.py --campaign_name 2026-03-21_archcomp --profile archcomp
+
+# 軽量確認（fast preset, 2 seeds, loto6 のみ）
+python scripts/run_campaign.py --campaign_name 2026-03-21_lite --profile archcomp_lite
+
+# run_more_seeds が続く場合は archcomp_full (5 seeds, default preset)
+python scripts/run_campaign.py --campaign_name 2026-03-21_full --profile archcomp_full
+```
+
+Campaign 出力:
+- `campaigns/<campaign_name>/cross_loto_report.md` — evidence pack（まず読む）
+- `campaigns/<campaign_name>/campaign_metadata.json` — profile・seeds・timing
+- `campaigns/<campaign_name>/cross_loto_summary.json` / `recommendation.json` — raw JSON
+- `data/campaign_diff_report.md` — 前回比較からの変化（**最初に確認する**）
+- `data/campaign_history.json` — 全 campaign 履歴 + recommendation stability
+- `data/campaign_history.csv` — 表計算用履歴
+
+**読む順序:** `data/campaign_diff_report.md` → `data/campaign_history.json` → `campaigns/<name>/cross_loto_report.md`
+
+### Campaign profile の違い
+
+| profile | preset | seeds | loto_types | 用途 |
+|---------|--------|-------|-----------|------|
+| `archcomp_lite` | fast | 2 | loto6 のみ | 軽量確認・sanity check |
+| `archcomp` | archcomp | 3 | 全 3 種 | 標準 campaign（既定） |
+| `archcomp_full` | default | 5 | 全 3 種 | run_more_seeds が続く場合の拡充 |
+
+### cross-loto 横断比較 (ad-hoc)
 ```bash
 python scripts/run_cross_loto.py \
     --loto_types loto6,loto7,miniloto \
@@ -65,6 +101,9 @@ python scripts/run_cross_loto.py --report_only
 - `scripts/run_experiment.py` は run ごとに `runs/` へ config・source hash・artifact copy・artifact hash を保存します。
 - `scripts/run_multi_seed.py` は複数 seed で experiment を実行し `data/comparison_summary_{loto_type}.json` に集計する。
 - `scripts/run_cross_loto.py` は複数 loto_type にわたって同じ比較を実行し `data/cross_loto_summary.json` と `data/recommendation.json` に集計する。新しい variant を試す前にまずこれで横断傾向を把握することを推奨する。
+- `scripts/run_campaign.py` は named campaign として cross-loto 比較を実行し、`campaigns/<name>/` へ全 artifact を保存しつつ `data/campaign_history.json` を更新する。単発比較より campaign runner を優先する。
+- `campaign_profiles.py` は archcomp_lite / archcomp / archcomp_full の 3 段階プロファイルを定義。epochs・seeds・loto_types を一括管理する。
+- `campaign_manager.py` は campaign 履歴管理・推奨安定性集計・diff report 生成を担当する。
 - `manifest_*.json` と `eval_report_*.json` には `data_fingerprint`、`training_context`、`runtime_environment` が入り、data hash / preprocessing version / seed / preset / model variant / calibration method / Python / dependency version を確認できます。
 - `smoke` preset は plumbing 確認用の 0-epoch 構成。`archcomp` preset は deepsets vs settransformer の architecture 比較専用 (eval_epochs=6, folds=3)。
 
