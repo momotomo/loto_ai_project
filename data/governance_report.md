@@ -1,8 +1,8 @@
 # Governance Report
 
-Generated: 2026-03-22T02:06:53.696303+00:00
+Generated: 2026-03-22T12:00:49.739598+00:00
 
-Latest campaign: **2026-03-21_archcomp_b**
+Latest campaign: **2026-03-22_archcomp_full_a**
 
 > **Reading order**: Start here. For details, see `campaign_acceptance.md` → `benchmark_lock.md` → `comparability_report.md` → `trend_summary.md` → `regression_alert.md` → `promotion_gate.md` → `campaign_diff_report.md` → evidence pack in `campaigns/<name>/cross_loto_report.md`.
 
@@ -19,7 +19,7 @@ Latest campaign: **2026-03-21_archcomp_b**
 **Status**: ✅ ACCEPTED
 **Counts toward promotion readiness**: ✅ `True`
 
-Campaign `2026-03-21_archcomp_b` meets all decision benchmark policy requirements. Benchmark: `archcomp`. This campaign counts toward promotion readiness.
+Campaign `2026-03-22_archcomp_full_a` meets all decision benchmark policy requirements. Benchmark: `archcomp_full`. This campaign counts toward promotion readiness.
 
 ## Whether This Campaign Counts Toward Promotion Readiness
 
@@ -27,8 +27,8 @@ Campaign `2026-03-21_archcomp_b` meets all decision benchmark policy requirement
 
 | Accepted-Only Metric | Value |
 |----------------------|-------|
-| Total accepted campaigns | 2 |
-| Consecutive same action (accepted only) | 2 |
+| Total accepted campaigns | 3 |
+| Consecutive same action (accepted only) | 3 |
 | Consecutive settransformer signal (accepted only) | 0 |
 
 ## Comparability
@@ -37,7 +37,7 @@ Campaign `2026-03-21_archcomp_b` meets all decision benchmark policy requirement
 
 **Status**: ⚠️ COMPARABLE
 
-1 pair(s) checked; all comparable but 1 pair(s) have warnings.  Review warnings before drawing trend conclusions.
+2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions.
 
 > ⚠️ Campaigns are comparable with caveats.  Review `comparability_report.md` before acting on trends.
 
@@ -54,40 +54,43 @@ Campaign `2026-03-21_archcomp_b` meets all decision benchmark policy requirement
 
 ## Promotion Readiness Gate
 
-**🟡 YELLOW** — Gate is YELLOW: Some conditions met (5 passed, 2 blockers). Signal is promising but not yet conclusive.
+**🔴 RED** — Gate is RED: Too many blockers (3) for promotion review. Current evidence is insufficient or contradictory.
 
 Blockers:
-  - No sustained positive action signal: latest=`hold`, consecutive=2 (need ≥2 for consider_promotion or run_more_seeds)
+  - No sustained positive action signal: latest=`hold`, consecutive=3 (need ≥2 for consider_promotion or run_more_seeds)
+  - Active HIGH regression alert — resolve before promotion review.
   - No variant passed promotion guardrails (consistent_promote_variants is empty).
 
 ## Regression Alert
 
-**✅ NONE** — No significant regression detected since the previous campaign.
+**🔴 HIGH** — Significant regression detected (8 signals across metrics, rankings, and/or recommendation). Investigate before any promotion decision.
+Affected variants: deepsets, legacy, multihot, settransformer
 
 ## Recommendation Stability
 
 | Metric | Value |
 |--------|-------|
-| Total campaigns | 2 |
+| Total campaigns | 3 |
 | Latest action | `hold` |
-| Consecutive same action | 2 |
-| Consecutive same challenger | 2 |
-| Consecutive keep_production | 2 |
+| Consecutive same action | 3 |
+| Consecutive same challenger | 3 |
+| Consecutive keep_production | 3 |
 | Consecutive run_more_seeds | 0 |
 | Consecutive settransformer+ signal | 0 |
-| Consecutive deepsets+ signal | 2 |
+| Consecutive deepsets+ signal | 0 |
 
+> **Signal**: `hold` for 3 consecutive campaigns. → Architecture differentiation may be limited at current scale.
 
 ## Recent Trend Overview
 
-Over the last 5 campaigns: dominant action = `hold`, dominant challenger = `settransformer`, keep_production streak = 2.
+Over the last 5 campaigns: dominant action = `hold`, dominant challenger = `settransformer`, keep_production streak = 3.
 
 | variant | rank_trend | logloss_trend |
 |---------|-----------|--------------|
-| deepsets | stable | stable |
-| legacy | stable | stable |
-| multihot | stable | stable |
-| settransformer | stable | stable |
+| deepsets | stable | worsening |
+| legacy | stable | worsening |
+| multihot | stable | worsening |
+| settransformer | stable | worsening |
 
 ## Production Status
 
@@ -110,23 +113,25 @@ Conditions to proceed to HPO (separate from PMA/ISAB):
 
 | Metric | Value |
 |--------|-------|
-| Accepted campaigns | **2** |
-| Campaigns counting toward promotion readiness | 2 |
+| Accepted campaigns | **3** |
+| Campaigns counting toward promotion readiness | 3 |
 | Consecutive accepted positive signals | 0 |
 
-Accepted campaigns: `2026-03-21_archcomp_a_retry`, `2026-03-21_archcomp_b`
+Accepted campaigns: `2026-03-21_archcomp_a_retry`, `2026-03-21_archcomp_b`, `2026-03-22_archcomp_full_a`
 
 ## Promotion Review Readiness
 
 **❌ NOT YET READY**
 
-2 blocker(s) prevent entering promotion review. Accepted campaigns: 2. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
+4 blocker(s) prevent entering promotion review. Accepted campaigns: 3. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
 
 Readiness blockers:
   - ❌ Latest accepted action `hold` is not a positive signal. Need ≥2 consecutive accepted campaigns with `consider_promotion` or `run_more_seeds`.
+  - ❌ Active HIGH regression alert — resolve before entering promotion review.
+  - ❌ promotion_gate_red: promotion gate is RED. Resolve gate blockers before promotion review. See `promotion_gate.md` for details.
   - ❌ No variant passed promotion guardrails in the latest accepted campaign (consistent_promote_variants is empty).
 
-> ❌ **Why current accepted evidence is not enough**: Latest accepted action `hold` is not a positive signal. Need ≥2 consecutive accepted campaigns with `consider_promotion` or `run_more_seeds`. / No variant passed promotion guardrails in the latest accepted campaign (consistent_promote_variants is empty).
+> ❌ **Why current accepted evidence is not enough**: Latest accepted action `hold` is not a positive signal. Need ≥2 consecutive accepted campaigns with `consider_promotion` or `run_more_seeds`. / Active HIGH regression alert — resolve before entering promotion review. / promotion_gate_red: promotion gate is RED. Resolve gate blockers before promotion review. See `promotion_gate.md` for details. / No variant passed promotion guardrails in the latest accepted campaign (consistent_promote_variants is empty).
 
 ---
 *Governance report generated by governance_layer.py v1*

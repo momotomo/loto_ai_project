@@ -1,18 +1,18 @@
 # Campaign Diff Report
 
-Comparing: **2026-03-21_archcomp_a_retry** → **2026-03-21_archcomp_b**
+Comparing: **2026-03-21_archcomp_b** → **2026-03-22_archcomp_full_a**
 
-Generated: 2026-03-22T02:06:53.694378+00:00
+Generated: 2026-03-22T12:00:49.737494+00:00
 
 ## Campaign Overview
 
 | | Previous | Current |
 |-|----------|---------|
-| campaign_name | 2026-03-21_archcomp_a_retry | 2026-03-21_archcomp_b |
-| profile_name | archcomp | archcomp |
-| generated_at | 2026-03-22T01:36:29.966372+00:00 | 2026-03-22T02:06:53.690599+00:00 |
-| preset | archcomp | archcomp |
-| seeds | [42, 123, 456] | [42, 123, 456] |
+| campaign_name | 2026-03-21_archcomp_b | 2026-03-22_archcomp_full_a |
+| profile_name | archcomp | archcomp_full |
+| generated_at | 2026-03-22T02:06:53.690599+00:00 | 2026-03-22T12:00:49.733730+00:00 |
+| preset | archcomp | default |
+| seeds | [42, 123, 456] | [42, 123, 456, 789, 999] |
 | loto_types | loto6, loto7, miniloto | loto6, loto7, miniloto |
 
 ## Comparability
@@ -21,15 +21,18 @@ Generated: 2026-03-22T02:06:53.694378+00:00
 
 | Dimension | Same? |
 |-----------|-------|
-| benchmark | ✅ Yes |
-| profile | ✅ Yes |
+| benchmark | ❌ No |
+| profile | ❌ No |
 | loto coverage | ✅ Yes |
-| seed count | ✅ Yes |
+| seed count | ❌ No |
 | variant set | ✅ Yes |
 | calibration methods | ✅ Yes |
 | data fingerprint | N/A |
 
 Comparability warnings (soft — proceed with caution):
+  - benchmark family match (compatible): 'archcomp' ↔ 'archcomp_full' — results may differ due to different seed counts or presets
+  - profile mismatch: 'archcomp' vs 'archcomp_full' — same benchmark family but potentially different training preset
+  - seed_count mismatch: 3 vs 5 — variance estimates may not be directly comparable
   - data_fingerprints not recorded for either campaign — cannot verify data consistency (add fingerprints for stronger comparability)
 
 *Treat metric differences with caution — review warnings before drawing conclusions.*
@@ -50,10 +53,10 @@ Comparability warnings (soft — proceed with caution):
 
 | variant | prev_rank | curr_rank | rank_Δ | prev_logloss | curr_logloss | logloss_Δ |
 |---------|-----------|-----------|--------|--------------|--------------|-----------|
-| **deepsets** | 3 | 3 | +0 | 0.5307 | 0.5307 | +0.0000 |
-| **legacy** | 4 | 4 | +0 | 0.5371 | 0.5371 | +0.0000 |
-| **multihot** | 2 | 2 | +0 | 0.5253 | 0.5253 | +0.0000 |
-| **settransformer** | 1 | 1 | +0 | 0.5127 | 0.5127 | +0.0000 |
+| **deepsets** | 3 | 3 | +0 | 0.5307 | 0.5561 | +0.0254 |
+| **legacy** | 4 | 4 | +0 | 0.5371 | 0.5603 | +0.0231 |
+| **multihot** | 2 | 2 | +0 | 0.5253 | 0.5471 | +0.0218 |
+| **settransformer** | 1 | 1 | +0 | 0.5127 | 0.5371 | +0.0244 |
 
 ## Pairwise Signal Change
 
@@ -61,26 +64,28 @@ Comparability warnings (soft — proceed with caution):
 
 | comparison | prev both_pass/run | curr both_pass/run | prev rate | curr rate | rate_Δ |
 |------------|-------------------|--------------------|-----------|-----------|--------|
-| deepsets_vs_best_static | 0/9 | 0/9 | 0.000 | 0.000 | +0.000 |
-| deepsets_vs_legacy | 2/9 | 2/9 | 0.222 | 0.222 | +0.000 |
-| deepsets_vs_multihot | 0/9 | 0/9 | 0.000 | 0.000 | +0.000 |
-| legacy_vs_best_static | 1/9 | 1/9 | 0.111 | 0.111 | +0.000 |
-| multihot_vs_best_static | 0/9 | 0/9 | 0.000 | 0.000 | +0.000 |
-| multihot_vs_legacy | 2/9 | 2/9 | 0.222 | 0.222 | +0.000 |
-| settransformer_vs_best_static | 0/9 | 0/9 | 0.000 | 0.000 | +0.000 |
-| settransformer_vs_deepsets | 3/9 | 3/9 | 0.333 | 0.333 | +0.000 |
-| settransformer_vs_legacy | 2/9 | 2/9 | 0.222 | 0.222 | +0.000 |
-| settransformer_vs_multihot | 1/9 | 1/9 | 0.111 | 0.111 | +0.000 |
+| deepsets_vs_best_static | 0/9 | 0/15 | 0.000 | 0.000 | +0.000 |
+| deepsets_vs_legacy | 2/9 | 0/15 | 0.222 | 0.000 | -0.222 |
+| deepsets_vs_multihot | 0/9 | 1/15 | 0.000 | 0.067 | +0.067 |
+| legacy_vs_best_static | 1/9 | 0/15 | 0.111 | 0.000 | -0.111 |
+| multihot_vs_best_static | 0/9 | 0/15 | 0.000 | 0.000 | +0.000 |
+| multihot_vs_legacy | 2/9 | 2/15 | 0.222 | 0.133 | -0.089 |
+| settransformer_vs_best_static | 0/9 | 0/15 | 0.000 | 0.000 | +0.000 |
+| settransformer_vs_deepsets | 3/9 | 3/15 | 0.333 | 0.200 | -0.133 |
+| settransformer_vs_legacy | 2/9 | 1/15 | 0.222 | 0.067 | -0.156 |
+| settransformer_vs_multihot | 1/9 | 1/15 | 0.111 | 0.067 | -0.044 |
 
 ## Recommendation Stability
 
-- **Total campaigns**: 2
+- **Total campaigns**: 3
 - **Latest action**: `hold`
-- **Consecutive same action**: 2
-- **Consecutive same challenger**: 2
-- **Consecutive keep_production**: 2
+- **Consecutive same action**: 3
+- **Consecutive same challenger**: 3
+- **Consecutive keep_production**: 3
 - **Consecutive run_more_seeds**: 0
 
+> **Stability signal**: `hold` has appeared in 3 consecutive campaigns.  
+> No consistent winner found — architecture differentiation may be limited.
 
 ## PMA / ISAB Next Steps
 

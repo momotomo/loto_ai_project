@@ -1,6 +1,6 @@
 # Accepted Campaign Review Bundle
 
-Generated: 2026-03-22T02:06:53.697332+00:00
+Generated: 2026-03-22T12:00:49.740261+00:00
 
 > **Start here for promotion review decisions.**  
 > This bundle aggregates all accepted campaign evidence in one place.  
@@ -12,26 +12,26 @@ Generated: 2026-03-22T02:06:53.697332+00:00
 | | Status |
 |--|--------|
 | **Promotion review readiness** | ❌ **NOT YET READY** |
-| Promotion gate (all campaigns) | 🟡 YELLOW |
-| Regression alert | ✅ NONE |
+| Promotion gate (all campaigns) | 🔴 RED |
+| Regression alert | 🔴 HIGH |
 | Comparability | ⚠️ WARNING |
-| Accepted campaigns | **2** |
+| Accepted campaigns | **3** |
 | Consecutive accepted positive signals | 0 |
 | Candidate variant | `settransformer` |
 
-2 blocker(s) prevent entering promotion review. Accepted campaigns: 2. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
+4 blocker(s) prevent entering promotion review. Accepted campaigns: 3. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
 
 ## Readiness Conditions Passed ✅
 
-- accepted_campaign_count: 2 accepted campaign(s) (≥2 required)
-- no_high_regression: regression alert level is 'none'
-- promotion_gate_yellow: promotion gate is YELLOW (some gate conditions met)
+- accepted_campaign_count: 3 accepted campaign(s) (≥2 required)
 
 ## Blockers Preventing Promotion Review ❌
 
 > Resolve all blockers before entering promotion review.
 
 - ❌ Latest accepted action `hold` is not a positive signal. Need ≥2 consecutive accepted campaigns with `consider_promotion` or `run_more_seeds`.
+- ❌ Active HIGH regression alert — resolve before entering promotion review.
+- ❌ promotion_gate_red: promotion gate is RED. Resolve gate blockers before promotion review. See `promotion_gate.md` for details.
 - ❌ No variant passed promotion guardrails in the latest accepted campaign (consistent_promote_variants is empty).
 
 ## Accepted Campaigns (Decision Evidence)
@@ -40,6 +40,7 @@ The following campaigns satisfy the Decision Benchmark Policy and may be used as
 
 - ✅ `2026-03-21_archcomp_a_retry`
 - ✅ `2026-03-21_archcomp_b`
+- ✅ `2026-03-22_archcomp_full_a`
 
 ## Action / Challenger History (Accepted Only)
 
@@ -47,12 +48,13 @@ The following campaigns satisfy the Decision Benchmark Policy and may be used as
 |----------|--------|------------|------------|-----------------|
 | `2026-03-21_archcomp_a_retry` | `hold` | settransformer | — | Yes |
 | `2026-03-21_archcomp_b` | `hold` | settransformer | — | Yes |
+| `2026-03-22_archcomp_full_a` | `hold` | settransformer | — | Yes |
 
 ## Latest Accepted Evidence
 
-Campaign: **2026-03-21_archcomp_b**
-Profile: `archcomp` | Benchmark: `archcomp`
-Seeds: `[42, 123, 456]` | Loto types: `['loto6', 'loto7', 'miniloto']`
+Campaign: **2026-03-22_archcomp_full_a**
+Profile: `archcomp_full` | Benchmark: `archcomp_full`
+Seeds: `[42, 123, 456, 789, 999]` | Loto types: `['loto6', 'loto7', 'miniloto']`
 
 | Field | Value |
 |-------|-------|
@@ -68,10 +70,10 @@ Seeds: `[42, 123, 456]` | Loto types: `['loto6', 'loto7', 'miniloto']`
 
 | Rank | Variant | logloss_mean |
 |------|---------|-------------|
-| 1 | **settransformer** | 0.5127 |
-| 2 | **multihot** | 0.5253 |
-| 3 | **deepsets** | 0.5307 |
-| 4 | **legacy** | 0.5371 |
+| 1 | **settransformer** | 0.5371 |
+| 2 | **multihot** | 0.5471 |
+| 3 | **deepsets** | 0.5561 |
+| 4 | **legacy** | 0.5603 |
 
 ## Recommended Next Step
 

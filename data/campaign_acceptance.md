@@ -1,17 +1,17 @@
 # Campaign Acceptance Report
 
-Generated: 2026-03-22T02:06:53.695199+00:00
+Generated: 2026-03-22T12:00:49.738364+00:00
 
-Campaign: **2026-03-21_archcomp_b**
+Campaign: **2026-03-22_archcomp_full_a**
 
 ## Acceptance Status: ✅ ACCEPTED
 
-Campaign `2026-03-21_archcomp_b` meets all decision benchmark policy requirements. Benchmark: `archcomp`. This campaign counts toward promotion readiness.
+Campaign `2026-03-22_archcomp_full_a` meets all decision benchmark policy requirements. Benchmark: `archcomp_full`. This campaign counts toward promotion readiness.
 
 | Field | Value |
 |-------|-------|
-| profile_name | `archcomp` |
-| benchmark_name | `archcomp` |
+| profile_name | `archcomp_full` |
+| benchmark_name | `archcomp_full` |
 | accepted_for_decision_use | `True` |
 | counts_toward_promotion_readiness | `True` |
 

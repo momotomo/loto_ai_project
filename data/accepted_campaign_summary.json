@@ -1,16 +1,18 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-22T02:06:53.696876+00:00",
-  "total_campaigns_in_history": 2,
-  "accepted_campaign_count": 2,
-  "counts_toward_promotion_readiness_count": 2,
+  "generated_at": "2026-03-22T12:00:49.739818+00:00",
+  "total_campaigns_in_history": 3,
+  "accepted_campaign_count": 3,
+  "counts_toward_promotion_readiness_count": 3,
   "accepted_campaign_names": [
     "2026-03-21_archcomp_a_retry",
-    "2026-03-21_archcomp_b"
+    "2026-03-21_archcomp_b",
+    "2026-03-22_archcomp_full_a"
   ],
   "counts_toward_promotion_readiness_names": [
     "2026-03-21_archcomp_a_retry",
-    "2026-03-21_archcomp_b"
+    "2026-03-21_archcomp_b",
+    "2026-03-22_archcomp_full_a"
   ],
   "action_history": [
     {
@@ -26,27 +28,42 @@
       "challenger": "settransformer",
       "keep_production": true,
       "pma_signal": false
+    },
+    {
+      "campaign_name": "2026-03-22_archcomp_full_a",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true,
+      "pma_signal": false
     }
   ],
   "action_distribution": {
-    "hold": 2
+    "hold": 3
   },
   "challenger_distribution": {
-    "settransformer": 2
+    "settransformer": 3
   },
   "consecutive_accepted_positive_signals": 0,
   "consecutive_accepted_settransformer_signal": 0,
   "profile_distribution": {
-    "archcomp": 2
+    "archcomp": 2,
+    "archcomp_full": 1
   },
   "benchmark_distribution": {
-    "archcomp": 2
+    "archcomp": 2,
+    "archcomp_full": 1
   },
   "seed_counts_per_accepted_campaign": [
     3,
-    3
+    3,
+    5
   ],
   "loto_types_per_accepted_campaign": [
+    [
+      "loto6",
+      "loto7",
+      "miniloto"
+    ],
     [
       "loto6",
       "loto7",
@@ -59,7 +76,7 @@
     ]
   ],
   "comparability_issues_within_accepted": [],
-  "latest_accepted_campaign_name": "2026-03-21_archcomp_b",
+  "latest_accepted_campaign_name": "2026-03-22_archcomp_full_a",
   "latest_accepted_action": "hold",
   "latest_accepted_challenger": "settransformer",
   "latest_accepted_pma_signal": false
