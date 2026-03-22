@@ -1,6 +1,6 @@
 # Promotion Review Readiness
 
-Generated: 2026-03-22T12:00:49.740049+00:00
+Generated: 2026-03-22T16:51:26.139229+00:00
 
 ## Status: ❌ NOT YET READY
 
@@ -8,12 +8,12 @@ Generated: 2026-03-22T12:00:49.740049+00:00
 > Production is NEVER changed automatically. This is a human decision gate only.  
 > Based exclusively on accepted campaigns (decision benchmark policy compliant).
 
-4 blocker(s) prevent entering promotion review. Accepted campaigns: 3. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
+4 blocker(s) prevent entering promotion review. Accepted campaigns: 4. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
 
 | Metric | Value |
 |--------|-------|
-| accepted_campaign_count | **3** |
-| counts_toward_promotion_readiness | 3 |
+| accepted_campaign_count | **4** |
+| counts_toward_promotion_readiness | 4 |
 | candidate_variant | `settransformer` |
 | consecutive_accepted_positive_signals | 0 |
 | consecutive_accepted_settransformer_signal | 0 |
@@ -25,10 +25,11 @@ Generated: 2026-03-22T12:00:49.740049+00:00
 - `2026-03-21_archcomp_a_retry`
 - `2026-03-21_archcomp_b`
 - `2026-03-22_archcomp_full_a`
+- `2026-03-22_archcomp_full_b`
 
 ## Conditions Passed ✅
 
-- accepted_campaign_count: 3 accepted campaign(s) (≥2 required)
+- accepted_campaign_count: 4 accepted campaign(s) (≥2 required)
 
 ## Blockers ❌
 

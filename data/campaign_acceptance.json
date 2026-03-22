@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-22T12:00:49.738364+00:00",
-  "campaign_name": "2026-03-22_archcomp_full_a",
+  "generated_at": "2026-03-22T16:51:26.137145+00:00",
+  "campaign_name": "2026-03-22_archcomp_full_b",
   "profile_name": "archcomp_full",
   "benchmark_name": "archcomp_full",
   "decision_benchmark_name": "archcomp_full",
@@ -10,5 +10,5 @@
   "can_count_toward_promotion_readiness": true,
   "failed_requirements": [],
   "warnings": [],
-  "rationale": "Campaign `2026-03-22_archcomp_full_a` meets all decision benchmark policy requirements. Benchmark: `archcomp_full`. This campaign counts toward promotion readiness."
+  "rationale": "Campaign `2026-03-22_archcomp_full_b` meets all decision benchmark policy requirements. Benchmark: `archcomp_full`. This campaign counts toward promotion readiness."
 }

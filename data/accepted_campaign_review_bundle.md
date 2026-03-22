@@ -1,6 +1,6 @@
 # Accepted Campaign Review Bundle
 
-Generated: 2026-03-22T12:00:49.740261+00:00
+Generated: 2026-03-22T16:51:26.139449+00:00
 
 > **Start here for promotion review decisions.**  
 > This bundle aggregates all accepted campaign evidence in one place.  
@@ -15,15 +15,15 @@ Generated: 2026-03-22T12:00:49.740261+00:00
 | Promotion gate (all campaigns) | 🔴 RED |
 | Regression alert | 🔴 HIGH |
 | Comparability | ⚠️ WARNING |
-| Accepted campaigns | **3** |
+| Accepted campaigns | **4** |
 | Consecutive accepted positive signals | 0 |
 | Candidate variant | `settransformer` |
 
-4 blocker(s) prevent entering promotion review. Accepted campaigns: 3. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
+4 blocker(s) prevent entering promotion review. Accepted campaigns: 4. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
 
 ## Readiness Conditions Passed ✅
 
-- accepted_campaign_count: 3 accepted campaign(s) (≥2 required)
+- accepted_campaign_count: 4 accepted campaign(s) (≥2 required)
 
 ## Blockers Preventing Promotion Review ❌
 
@@ -41,6 +41,7 @@ The following campaigns satisfy the Decision Benchmark Policy and may be used as
 - ✅ `2026-03-21_archcomp_a_retry`
 - ✅ `2026-03-21_archcomp_b`
 - ✅ `2026-03-22_archcomp_full_a`
+- ✅ `2026-03-22_archcomp_full_b`
 
 ## Action / Challenger History (Accepted Only)
 
@@ -49,10 +50,11 @@ The following campaigns satisfy the Decision Benchmark Policy and may be used as
 | `2026-03-21_archcomp_a_retry` | `hold` | settransformer | — | Yes |
 | `2026-03-21_archcomp_b` | `hold` | settransformer | — | Yes |
 | `2026-03-22_archcomp_full_a` | `hold` | settransformer | — | Yes |
+| `2026-03-22_archcomp_full_b` | `hold` | settransformer | — | Yes |
 
 ## Latest Accepted Evidence
 
-Campaign: **2026-03-22_archcomp_full_a**
+Campaign: **2026-03-22_archcomp_full_b**
 Profile: `archcomp_full` | Benchmark: `archcomp_full`
 Seeds: `[42, 123, 456, 789, 999]` | Loto types: `['loto6', 'loto7', 'miniloto']`
 

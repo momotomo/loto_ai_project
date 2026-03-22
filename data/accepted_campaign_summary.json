@@ -1,18 +1,20 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-22T12:00:49.739818+00:00",
-  "total_campaigns_in_history": 3,
-  "accepted_campaign_count": 3,
-  "counts_toward_promotion_readiness_count": 3,
+  "generated_at": "2026-03-22T16:51:26.138974+00:00",
+  "total_campaigns_in_history": 4,
+  "accepted_campaign_count": 4,
+  "counts_toward_promotion_readiness_count": 4,
   "accepted_campaign_names": [
     "2026-03-21_archcomp_a_retry",
     "2026-03-21_archcomp_b",
-    "2026-03-22_archcomp_full_a"
+    "2026-03-22_archcomp_full_a",
+    "2026-03-22_archcomp_full_b"
   ],
   "counts_toward_promotion_readiness_names": [
     "2026-03-21_archcomp_a_retry",
     "2026-03-21_archcomp_b",
-    "2026-03-22_archcomp_full_a"
+    "2026-03-22_archcomp_full_a",
+    "2026-03-22_archcomp_full_b"
   ],
   "action_history": [
     {
@@ -35,27 +37,35 @@
       "challenger": "settransformer",
       "keep_production": true,
       "pma_signal": false
+    },
+    {
+      "campaign_name": "2026-03-22_archcomp_full_b",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true,
+      "pma_signal": false
     }
   ],
   "action_distribution": {
-    "hold": 3
+    "hold": 4
   },
   "challenger_distribution": {
-    "settransformer": 3
+    "settransformer": 4
   },
   "consecutive_accepted_positive_signals": 0,
   "consecutive_accepted_settransformer_signal": 0,
   "profile_distribution": {
     "archcomp": 2,
-    "archcomp_full": 1
+    "archcomp_full": 2
   },
   "benchmark_distribution": {
     "archcomp": 2,
-    "archcomp_full": 1
+    "archcomp_full": 2
   },
   "seed_counts_per_accepted_campaign": [
     3,
     3,
+    5,
     5
   ],
   "loto_types_per_accepted_campaign": [
@@ -73,10 +83,15 @@
       "loto6",
       "loto7",
       "miniloto"
+    ],
+    [
+      "loto6",
+      "loto7",
+      "miniloto"
     ]
   ],
   "comparability_issues_within_accepted": [],
-  "latest_accepted_campaign_name": "2026-03-22_archcomp_full_a",
+  "latest_accepted_campaign_name": "2026-03-22_archcomp_full_b",
   "latest_accepted_action": "hold",
   "latest_accepted_challenger": "settransformer",
   "latest_accepted_pma_signal": false

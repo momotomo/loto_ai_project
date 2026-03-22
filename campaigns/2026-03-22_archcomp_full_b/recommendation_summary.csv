@@ -1,0 +1,2 @@
+generated_at,loto_types,preset,seeds,run_count_total,recommended_next_action,recommended_challenger,keep_production_as_is,whether_to_try_pma_or_isab_next,best_variant_by_logloss,consistent_promote_variants,blockers_count,next_experiment_count
+2026-03-22T16:51:26.132495+00:00,loto6|loto7|miniloto,default,42|123|456|789|999,15,hold,settransformer,true,false,settransformer,,1,1

@@ -1,0 +1,51 @@
+{
+  "campaign_name": "2026-03-22_archcomp_full_b",
+  "profile_name": "archcomp_full",
+  "benchmark_name": "archcomp_full",
+  "profile": {
+    "preset": "default",
+    "seeds": [
+      42,
+      123,
+      456,
+      789,
+      999
+    ],
+    "loto_types": [
+      "loto6",
+      "loto7",
+      "miniloto"
+    ],
+    "evaluation_model_variants": "legacy,multihot,deepsets,settransformer",
+    "saved_calibration_method": "none",
+    "evaluation_calibration_methods": "none,temperature,isotonic",
+    "description": "Extended 5-seed full-preset comparison.  Use when signals are borderline or run_more_seeds is recommended."
+  },
+  "run_id": "20260322T165126Z_2026-03-22_archcomp_full_b",
+  "started_at": "2026-03-22T15:56:49.852233+00:00",
+  "finished_at": "2026-03-22T16:51:26.134908+00:00",
+  "campaign_dir": "/Users/kasuyatomohiro/loto_ai_project/campaigns/2026-03-22_archcomp_full_b",
+  "data_dir": "/Users/kasuyatomohiro/loto_ai_project/data",
+  "loto_types": [
+    "loto6",
+    "loto7",
+    "miniloto"
+  ],
+  "seeds": [
+    42,
+    123,
+    456,
+    789,
+    999
+  ],
+  "preset": "default",
+  "evaluation_model_variants": "legacy,multihot,deepsets,settransformer",
+  "evaluation_calibration_methods": "none,temperature,isotonic",
+  "alpha": 0.05,
+  "skip_training": false,
+  "source_summary_paths": {
+    "loto6": "/Users/kasuyatomohiro/loto_ai_project/campaigns/2026-03-22_archcomp_full_b/comparison_summary_loto6.json",
+    "loto7": "/Users/kasuyatomohiro/loto_ai_project/campaigns/2026-03-22_archcomp_full_b/comparison_summary_loto7.json",
+    "miniloto": "/Users/kasuyatomohiro/loto_ai_project/campaigns/2026-03-22_archcomp_full_b/comparison_summary_miniloto.json"
+  }
+}

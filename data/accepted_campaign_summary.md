@@ -1,6 +1,6 @@
 # Accepted Campaign Summary (Decision-Evidence Only)
 
-Generated: 2026-03-22T12:00:49.739818+00:00
+Generated: 2026-03-22T16:51:26.138974+00:00
 
 > **This document shows only campaigns accepted by the Decision Benchmark Policy.**  
 > Non-accepted campaigns (archcomp_lite, non-comparable, etc.) are excluded.  
@@ -11,9 +11,9 @@ Generated: 2026-03-22T12:00:49.739818+00:00
 
 | Metric | Value |
 |--------|-------|
-| Total campaigns in history | 3 |
-| Accepted for decision use | **3** |
-| Counting toward promotion readiness | **3** |
+| Total campaigns in history | 4 |
+| Accepted for decision use | **4** |
+| Counting toward promotion readiness | **4** |
 | Consecutive accepted positive signals | 0 |
 | Consecutive accepted settransformer signal | 0 |
 
@@ -22,6 +22,7 @@ Generated: 2026-03-22T12:00:49.739818+00:00
 - `2026-03-21_archcomp_a_retry`
 - `2026-03-21_archcomp_b`
 - `2026-03-22_archcomp_full_a`
+- `2026-03-22_archcomp_full_b`
 
 ## Action / Challenger History (Accepted Only)
 
@@ -30,18 +31,19 @@ Generated: 2026-03-22T12:00:49.739818+00:00
 | `2026-03-21_archcomp_a_retry` | `hold` | settransformer | — | Yes |
 | `2026-03-21_archcomp_b` | `hold` | settransformer | — | Yes |
 | `2026-03-22_archcomp_full_a` | `hold` | settransformer | — | Yes |
+| `2026-03-22_archcomp_full_b` | `hold` | settransformer | — | Yes |
 
 ## Action Distribution (Accepted Only)
 
 | Action | Count |
 |--------|-------|
-| `hold` | 3 |
+| `hold` | 4 |
 
 ## Challenger Distribution (Accepted Only)
 
 | Challenger | Count |
 |------------|-------|
-| `settransformer` | 3 |
+| `settransformer` | 4 |
 
 ## Comparability (Within Accepted Campaigns)
 
