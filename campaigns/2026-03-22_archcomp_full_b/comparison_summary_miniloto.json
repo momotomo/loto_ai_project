@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T16:51:26.128243+00:00",
+  "loto_type": "miniloto",
+  "preset": "default",
+  "seeds": [
+    42,
+    123,
+    456,
+    789,
+    999
+  ],
+  "run_count": 5,
+  "alpha": 0.05,
+  "variants": {
+    "deepsets": {
+      "run_count": 5,
+      "logloss": {
+        "mean": 0.5519065141677857,
+        "std": 0.0062774011060767795,
+        "values": [
+          0.5527065992355347,
+          0.545682430267334,
+          0.5472790598869324,
+          0.5503854751586914,
+          0.5634790062904358
+        ]
+      },
+      "brier": {
+        "mean": 0.18111612498760224,
+        "std": 0.0029101778672674813,
+        "values": [
+          0.18144600093364716,
+          0.17821770906448364,
+          0.17901469767093658,
+          0.18040843307971954,
+          0.18649378418922424
+        ]
+      },
+      "ece": {
+        "mean": 0.20947081744670867,
+        "std": 0.007590733908828588,
+        "values": [
+          0.21145522594451904,
+          0.20230229198932648,
+          0.20381538569927216,
+          0.2064632922410965,
+          0.22331789135932922
+        ]
+      },
+      "calibration_recommendations": {
+        "temperature": 3,
+        "isotonic": 2
+      },
+      "promote_count": 0,
+      "hold_count": 5
+    },
+    "legacy": {
+      "run_count": 5,
+      "logloss": {
+        "mean": 0.559842848777771,
+        "std": 0.0073744888920998985,
+        "values": [
+          0.5525568127632141,
+          0.5671464204788208,
+          0.563274621963501,
+          0.5667135715484619,
+          0.5495228171348572
+        ]
+      },
+      "brier": {
+        "mean": 0.1848163902759552,
+        "std": 0.0034842042215243465,
+        "values": [
+          0.18151099979877472,
+          0.1883104294538498,
+          0.18637290596961975,
+          0.1880437433719635,
+          0.17984387278556824
+        ]
+      },
+      "ece": {
+        "mean": 0.21908157467842101,
+        "std": 0.008532687299745675,
+        "values": [
+          0.2102872133255005,
+          0.2258394956588745,
+          0.22462216019630432,
+          0.22743360698223114,
+          0.20722539722919464
+        ]
+      },
+      "calibration_recommendations": {
+        "isotonic": 4,
+        "temperature": 1
+      },
+      "promote_count": 0,
+      "hold_count": 0
+    },
+    "multihot": {
+      "run_count": 5,
+      "logloss": {
+        "mean": 0.5495158076286316,
+        "std": 0.004794390962786874,
+        "values": [
+          0.5414278507232666,
+          0.5503501296043396,
+          0.5553820729255676,
+          0.5528022050857544,
+          0.5476167798042297
+        ]
+      },
+      "brier": {
+        "mean": 0.1800195097923279,
+        "std": 0.0021894958784655395,
+        "values": [
+          0.176344633102417,
+          0.1802198588848114,
+          0.18273472785949707,
+          0.1815747320652008,
+          0.17922359704971313
+        ]
+      },
+      "ece": {
+        "mean": 0.20634423792362214,
+        "std": 0.007090100087756639,
+        "values": [
+          0.1927669644355774,
+          0.2110220491886139,
+          0.21156306564807892,
+          0.21054184436798096,
+          0.2058272659778595
+        ]
+      },
+      "calibration_recommendations": {
+        "isotonic": 5
+      },
+      "promote_count": 0,
+      "hold_count": 5
+    },
+    "settransformer": {
+      "run_count": 5,
+      "logloss": {
+        "mean": 0.528621780872345,
+        "std": 0.0071618731234617955,
+        "values": [
+          0.5204397439956665,
+          0.5400180816650391,
+          0.5336658358573914,
+          0.5247143507003784,
+          0.5242708921432495
+        ]
+      },
+      "brier": {
+        "mean": 0.17077713310718537,
+        "std": 0.003159216540430616,
+        "values": [
+          0.1672087460756302,
+          0.17580901086330414,
+          0.173009991645813,
+          0.169057235121727,
+          0.16880068182945251
+        ]
+      },
+      "ece": {
+        "mean": 0.1788783460855484,
+        "std": 0.009713683287906266,
+        "values": [
+          0.1684814989566803,
+          0.1944371461868286,
+          0.18576358258724213,
+          0.17195096611976624,
+          0.17375853657722473
+        ]
+      },
+      "calibration_recommendations": {
+        "isotonic": 5
+      },
+      "promote_count": 0,
+      "hold_count": 5
+    }
+  },
+  "pairwise_comparisons": {
+    "settransformer_vs_deepsets": {
+      "run_count": 5,
+      "ci_wins": 3,
+      "permutation_wins": 3,
+      "both_pass_count": 3
+    },
+    "settransformer_vs_multihot": {
+      "run_count": 5,
+      "ci_wins": 0,
+      "permutation_wins": 0,
+      "both_pass_count": 0
+    },
+    "deepsets_vs_multihot": {
+      "run_count": 5,
+      "ci_wins": 1,
+      "permutation_wins": 3,
+      "both_pass_count": 0
+    },
+    "settransformer_vs_legacy": {
+      "run_count": 5,
+      "ci_wins": 1,
+      "permutation_wins": 1,
+      "both_pass_count": 1
+    },
+    "deepsets_vs_legacy": {
+      "run_count": 5,
+      "ci_wins": 0,
+      "permutation_wins": 2,
+      "both_pass_count": 0
+    },
+    "multihot_vs_legacy": {
+      "run_count": 5,
+      "ci_wins": 1,
+      "permutation_wins": 1,
+      "both_pass_count": 1
+    },
+    "deepsets_vs_best_static": {
+      "run_count": 5,
+      "ci_wins": 0,
+      "permutation_wins": 3,
+      "both_pass_count": 0
+    },
+    "legacy_vs_best_static": {
+      "run_count": 5,
+      "ci_wins": 0,
+      "permutation_wins": 2,
+      "both_pass_count": 0
+    },
+    "multihot_vs_best_static": {
+      "run_count": 5,
+      "ci_wins": 0,
+      "permutation_wins": 2,
+      "both_pass_count": 0
+    },
+    "settransformer_vs_best_static": {
+      "run_count": 5,
+      "ci_wins": 0,
+      "permutation_wins": 0,
+      "both_pass_count": 0
+    }
+  }
+}

@@ -1,13 +1,14 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-22T12:00:49.739144+00:00",
+  "generated_at": "2026-03-22T16:51:26.138310+00:00",
   "alert_level": "high",
   "comparability_caution": false,
-  "comparability_note": "2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions.",
-  "latest_campaign": "2026-03-22_archcomp_full_a",
+  "comparability_note": "3 pair(s) checked; all comparable but 3 pair(s) have warnings.  Review warnings before drawing trend conclusions.",
+  "latest_campaign": "2026-03-22_archcomp_full_b",
   "baseline_campaigns": [
     "2026-03-21_archcomp_a_retry",
-    "2026-03-21_archcomp_b"
+    "2026-03-21_archcomp_b",
+    "2026-03-22_archcomp_full_a"
   ],
   "affected_variants": [
     "deepsets",
@@ -19,53 +20,43 @@
   "metric_regressions": {
     "settransformer": {
       "metric": "logloss",
-      "prev_avg": 0.51267,
+      "prev_avg": 0.52082,
       "curr": 0.53712,
-      "delta": 0.02445,
+      "delta": 0.0163,
       "direction": "worsened"
     },
     "multihot": {
       "metric": "logloss",
-      "prev_avg": 0.52534,
+      "prev_avg": 0.5326,
       "curr": 0.54712,
-      "delta": 0.02178,
+      "delta": 0.01452,
       "direction": "worsened"
     },
     "deepsets": {
       "metric": "logloss",
-      "prev_avg": 0.53065,
+      "prev_avg": 0.53913,
       "curr": 0.55609,
-      "delta": 0.02543,
+      "delta": 0.01696,
       "direction": "worsened"
     },
     "legacy": {
       "metric": "logloss",
-      "prev_avg": 0.53713,
+      "prev_avg": 0.54484,
       "curr": 0.56026,
-      "delta": 0.02313,
+      "delta": 0.01542,
       "direction": "worsened"
     }
   },
   "pairwise_signal_loss": {
-    "settransformer_vs_deepsets": {
-      "prev_avg_rate": 0.3333,
-      "curr_rate": 0.2,
-      "drop": 0.1333
-    },
     "settransformer_vs_legacy": {
-      "prev_avg_rate": 0.2222,
+      "prev_avg_rate": 0.1704,
       "curr_rate": 0.0667,
-      "drop": 0.1555
+      "drop": 0.1037
     },
     "deepsets_vs_legacy": {
-      "prev_avg_rate": 0.2222,
+      "prev_avg_rate": 0.1481,
       "curr_rate": 0.0,
-      "drop": 0.2222
-    },
-    "legacy_vs_best_static": {
-      "prev_avg_rate": 0.1111,
-      "curr_rate": 0.0,
-      "drop": 0.1111
+      "drop": 0.1481
     }
   },
   "recommendation_instability": {
@@ -78,7 +69,7 @@
   },
   "suspected_causes": [
     "Logloss regression in: settransformer, multihot, deepsets, legacy. Consider increasing seeds or switching to archcomp_full profile.",
-    "Pairwise signal loss in: settransformer_vs_deepsets, settransformer_vs_legacy, deepsets_vs_legacy, legacy_vs_best_static. Signal may be noise; additional seeds needed for confirmation."
+    "Pairwise signal loss in: settransformer_vs_legacy, deepsets_vs_legacy. Signal may be noise; additional seeds needed for confirmation."
   ],
-  "summary": "Significant regression detected (8 signals across metrics, rankings, and/or recommendation). Investigate before any promotion decision."
+  "summary": "Significant regression detected (6 signals across metrics, rankings, and/or recommendation). Investigate before any promotion decision."
 }

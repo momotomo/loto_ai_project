@@ -1,24 +1,24 @@
 # Promotion Readiness Gate
 
-Generated: 2026-03-22T12:00:49.739419+00:00
+Generated: 2026-03-22T16:51:26.138601+00:00
 
 ## Gate Status: 🔴 **RED**
 
 > Gate is RED: Too many blockers (3) for promotion review. Current evidence is insufficient or contradictory.
 
 - **Candidate variant**: `settransformer`
-- **Evidence window**: 3 recent campaign(s)
+- **Evidence window**: 4 recent campaign(s)
 
 ## Conditions Passed ✅
 
-- consistent_challenger: 'settransformer' recommended 3 consecutive times
+- consistent_challenger: 'settransformer' recommended 4 consecutive times
 - enough_seeds: 5 seeds evaluated
 - enough_loto_types: 3 loto_types evaluated
-- comparability_ok: campaigns are comparable with warnings — 2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions.
+- comparability_ok: campaigns are comparable with warnings — 3 pair(s) checked; all comparable but 3 pair(s) have warnings.  Review warnings before drawing trend conclusions.
 
 ## Blockers ❌
 
-- No sustained positive action signal: latest=`hold`, consecutive=3 (need ≥2 for consider_promotion or run_more_seeds)
+- No sustained positive action signal: latest=`hold`, consecutive=4 (need ≥2 for consider_promotion or run_more_seeds)
 - Active HIGH regression alert — resolve before promotion review.
 - No variant passed promotion guardrails (consistent_promote_variants is empty).
 

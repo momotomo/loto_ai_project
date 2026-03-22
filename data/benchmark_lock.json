@@ -39,7 +39,7 @@
   "promotion_review_policy": "To enter promotion review, the operator must observe: (1) ≥2 consecutive accepted campaigns with recommend_next_action in {consider_promotion, run_more_seeds}, (2) promotion gate status = green, (3) manual per-loto evidence review confirms signal is genuine, (4) no active HIGH regression alert. Production is never changed automatically.",
   "accepted_only_counting_policy": "Stability metrics (consecutive_same_action, consecutive_positive_signal_*) are computed over ALL campaigns for trend awareness. The *_accepted_only variants count only campaigns where accepted_for_decision_use=True and counts_toward_promotion_readiness=True. Use the accepted_only counts for promotion readiness decisions.",
   "pma_isab_precondition_policy": "Before exploring PMA / ISAB or HPO: (1) ≥2 consecutive ACCEPTED campaigns with positive settransformer signal, (2) promotion gate is GREEN on an accepted campaign, (3) no active HIGH regression alert. Do NOT proceed based on archcomp_lite or non-accepted campaigns.",
-  "generated_at": "2026-03-22T12:00:49.737748+00:00",
+  "generated_at": "2026-03-22T16:51:26.136556+00:00",
   "active_benchmark_definitions": {
     "archcomp": {
       "benchmark_name": "archcomp",

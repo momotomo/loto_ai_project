@@ -1,16 +1,18 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-22T12:00:49.738616+00:00",
+  "generated_at": "2026-03-22T16:51:26.137399+00:00",
   "tracked_window_size": 5,
-  "total_campaigns": 3,
+  "total_campaigns": 4,
   "campaigns_considered": [
     "2026-03-21_archcomp_a_retry",
     "2026-03-21_archcomp_b",
-    "2026-03-22_archcomp_full_a"
+    "2026-03-22_archcomp_full_a",
+    "2026-03-22_archcomp_full_b"
   ],
   "variant_rank_history": {
     "deepsets": {
       "ranks": [
+        3,
         3,
         3,
         3
@@ -21,6 +23,7 @@
       "ranks": [
         4,
         4,
+        4,
         4
       ],
       "rank_trend": "stable"
@@ -29,12 +32,14 @@
       "ranks": [
         2,
         2,
+        2,
         2
       ],
       "rank_trend": "stable"
     },
     "settransformer": {
       "ranks": [
+        1,
         1,
         1,
         1
@@ -48,6 +53,7 @@
         "values": [
           0.5306513177023994,
           0.5306513177023994,
+          0.5560862481594085,
           0.5560862481594085
         ],
         "trend": "worsening"
@@ -58,6 +64,7 @@
         "values": [
           0.5371345380942026,
           0.5371345380942026,
+          0.5602647105852764,
           0.5602647105852764
         ],
         "trend": "worsening"
@@ -68,6 +75,7 @@
         "values": [
           0.5253438585334355,
           0.5253438585334355,
+          0.5471190551916759,
           0.5471190551916759
         ],
         "trend": "worsening"
@@ -78,6 +86,7 @@
         "values": [
           0.5126700434419843,
           0.5126700434419843,
+          0.5371165533860525,
           0.5371165533860525
         ],
         "trend": "worsening"
@@ -102,9 +111,15 @@
       "action": "hold",
       "challenger": "settransformer",
       "keep_production": true
+    },
+    {
+      "campaign_name": "2026-03-22_archcomp_full_b",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true
     }
   ],
-  "keep_production_streak": 3,
+  "keep_production_streak": 4,
   "pairwise_signal_history": {
     "deepsets_vs_best_static": [
       {
@@ -121,6 +136,12 @@
       },
       {
         "campaign_name": "2026-03-22_archcomp_full_a",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
         "both_pass_rate": 0.0,
         "both_pass_count": 0,
         "run_count": 15
@@ -144,6 +165,12 @@
         "both_pass_rate": 0.0,
         "both_pass_count": 0,
         "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 15
       }
     ],
     "deepsets_vs_multihot": [
@@ -161,6 +188,12 @@
       },
       {
         "campaign_name": "2026-03-22_archcomp_full_a",
+        "both_pass_rate": 0.0667,
+        "both_pass_count": 1,
+        "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
         "both_pass_rate": 0.0667,
         "both_pass_count": 1,
         "run_count": 15
@@ -184,6 +217,12 @@
         "both_pass_rate": 0.0,
         "both_pass_count": 0,
         "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 15
       }
     ],
     "multihot_vs_best_static": [
@@ -201,6 +240,12 @@
       },
       {
         "campaign_name": "2026-03-22_archcomp_full_a",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
         "both_pass_rate": 0.0,
         "both_pass_count": 0,
         "run_count": 15
@@ -224,6 +269,12 @@
         "both_pass_rate": 0.1333,
         "both_pass_count": 2,
         "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
+        "both_pass_rate": 0.1333,
+        "both_pass_count": 2,
+        "run_count": 15
       }
     ],
     "settransformer_vs_best_static": [
@@ -241,6 +292,12 @@
       },
       {
         "campaign_name": "2026-03-22_archcomp_full_a",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
         "both_pass_rate": 0.0,
         "both_pass_count": 0,
         "run_count": 15
@@ -264,6 +321,12 @@
         "both_pass_rate": 0.2,
         "both_pass_count": 3,
         "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
+        "both_pass_rate": 0.2,
+        "both_pass_count": 3,
+        "run_count": 15
       }
     ],
     "settransformer_vs_legacy": [
@@ -281,6 +344,12 @@
       },
       {
         "campaign_name": "2026-03-22_archcomp_full_a",
+        "both_pass_rate": 0.0667,
+        "both_pass_count": 1,
+        "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
         "both_pass_rate": 0.0667,
         "both_pass_count": 1,
         "run_count": 15
@@ -304,15 +373,21 @@
         "both_pass_rate": 0.0667,
         "both_pass_count": 1,
         "run_count": 15
+      },
+      {
+        "campaign_name": "2026-03-22_archcomp_full_b",
+        "both_pass_rate": 0.0667,
+        "both_pass_count": 1,
+        "run_count": 15
       }
     ]
   },
   "dominant_action": "hold",
   "dominant_challenger": "settransformer",
   "action_distribution": {
-    "hold": 3
+    "hold": 4
   },
   "comparability_overall": true,
   "comparability_severity": "warning",
-  "comparability_note": "2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions."
+  "comparability_note": "3 pair(s) checked; all comparable but 3 pair(s) have warnings.  Review warnings before drawing trend conclusions."
 }

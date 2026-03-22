@@ -1,8 +1,8 @@
 # Governance Report
 
-Generated: 2026-03-22T12:00:49.739598+00:00
+Generated: 2026-03-22T16:51:26.138791+00:00
 
-Latest campaign: **2026-03-22_archcomp_full_a**
+Latest campaign: **2026-03-22_archcomp_full_b**
 
 > **Reading order**: Start here. For details, see `campaign_acceptance.md` → `benchmark_lock.md` → `comparability_report.md` → `trend_summary.md` → `regression_alert.md` → `promotion_gate.md` → `campaign_diff_report.md` → evidence pack in `campaigns/<name>/cross_loto_report.md`.
 
@@ -19,7 +19,7 @@ Latest campaign: **2026-03-22_archcomp_full_a**
 **Status**: ✅ ACCEPTED
 **Counts toward promotion readiness**: ✅ `True`
 
-Campaign `2026-03-22_archcomp_full_a` meets all decision benchmark policy requirements. Benchmark: `archcomp_full`. This campaign counts toward promotion readiness.
+Campaign `2026-03-22_archcomp_full_b` meets all decision benchmark policy requirements. Benchmark: `archcomp_full`. This campaign counts toward promotion readiness.
 
 ## Whether This Campaign Counts Toward Promotion Readiness
 
@@ -27,8 +27,8 @@ Campaign `2026-03-22_archcomp_full_a` meets all decision benchmark policy requir
 
 | Accepted-Only Metric | Value |
 |----------------------|-------|
-| Total accepted campaigns | 3 |
-| Consecutive same action (accepted only) | 3 |
+| Total accepted campaigns | 4 |
+| Consecutive same action (accepted only) | 4 |
 | Consecutive settransformer signal (accepted only) | 0 |
 
 ## Comparability
@@ -37,7 +37,7 @@ Campaign `2026-03-22_archcomp_full_a` meets all decision benchmark policy requir
 
 **Status**: ⚠️ COMPARABLE
 
-2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions.
+3 pair(s) checked; all comparable but 3 pair(s) have warnings.  Review warnings before drawing trend conclusions.
 
 > ⚠️ Campaigns are comparable with caveats.  Review `comparability_report.md` before acting on trends.
 
@@ -57,33 +57,33 @@ Campaign `2026-03-22_archcomp_full_a` meets all decision benchmark policy requir
 **🔴 RED** — Gate is RED: Too many blockers (3) for promotion review. Current evidence is insufficient or contradictory.
 
 Blockers:
-  - No sustained positive action signal: latest=`hold`, consecutive=3 (need ≥2 for consider_promotion or run_more_seeds)
+  - No sustained positive action signal: latest=`hold`, consecutive=4 (need ≥2 for consider_promotion or run_more_seeds)
   - Active HIGH regression alert — resolve before promotion review.
   - No variant passed promotion guardrails (consistent_promote_variants is empty).
 
 ## Regression Alert
 
-**🔴 HIGH** — Significant regression detected (8 signals across metrics, rankings, and/or recommendation). Investigate before any promotion decision.
+**🔴 HIGH** — Significant regression detected (6 signals across metrics, rankings, and/or recommendation). Investigate before any promotion decision.
 Affected variants: deepsets, legacy, multihot, settransformer
 
 ## Recommendation Stability
 
 | Metric | Value |
 |--------|-------|
-| Total campaigns | 3 |
+| Total campaigns | 4 |
 | Latest action | `hold` |
-| Consecutive same action | 3 |
-| Consecutive same challenger | 3 |
-| Consecutive keep_production | 3 |
+| Consecutive same action | 4 |
+| Consecutive same challenger | 4 |
+| Consecutive keep_production | 4 |
 | Consecutive run_more_seeds | 0 |
 | Consecutive settransformer+ signal | 0 |
 | Consecutive deepsets+ signal | 0 |
 
-> **Signal**: `hold` for 3 consecutive campaigns. → Architecture differentiation may be limited at current scale.
+> **Signal**: `hold` for 4 consecutive campaigns. → Architecture differentiation may be limited at current scale.
 
 ## Recent Trend Overview
 
-Over the last 5 campaigns: dominant action = `hold`, dominant challenger = `settransformer`, keep_production streak = 3.
+Over the last 5 campaigns: dominant action = `hold`, dominant challenger = `settransformer`, keep_production streak = 4.
 
 | variant | rank_trend | logloss_trend |
 |---------|-----------|--------------|
@@ -113,17 +113,17 @@ Conditions to proceed to HPO (separate from PMA/ISAB):
 
 | Metric | Value |
 |--------|-------|
-| Accepted campaigns | **3** |
-| Campaigns counting toward promotion readiness | 3 |
+| Accepted campaigns | **4** |
+| Campaigns counting toward promotion readiness | 4 |
 | Consecutive accepted positive signals | 0 |
 
-Accepted campaigns: `2026-03-21_archcomp_a_retry`, `2026-03-21_archcomp_b`, `2026-03-22_archcomp_full_a`
+Accepted campaigns: `2026-03-21_archcomp_a_retry`, `2026-03-21_archcomp_b`, `2026-03-22_archcomp_full_a`, `2026-03-22_archcomp_full_b`
 
 ## Promotion Review Readiness
 
 **❌ NOT YET READY**
 
-4 blocker(s) prevent entering promotion review. Accepted campaigns: 3. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
+4 blocker(s) prevent entering promotion review. Accepted campaigns: 4. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
 
 Readiness blockers:
   - ❌ Latest accepted action `hold` is not a positive signal. Need ≥2 consecutive accepted campaigns with `consider_promotion` or `run_more_seeds`.

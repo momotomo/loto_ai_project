@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-22T12:00:49.739419+00:00",
+  "generated_at": "2026-03-22T16:51:26.138601+00:00",
   "gate_status": "red",
   "candidate_variant": "settransformer",
-  "evidence_window": 3,
+  "evidence_window": 4,
   "comparability_ok": true,
   "comparability_severity": "warning",
-  "comparability_note": "2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions.",
+  "comparability_note": "3 pair(s) checked; all comparable but 3 pair(s) have warnings.  Review warnings before drawing trend conclusions.",
   "conditions_passed": [
-    "consistent_challenger: 'settransformer' recommended 3 consecutive times",
+    "consistent_challenger: 'settransformer' recommended 4 consecutive times",
     "enough_seeds: 5 seeds evaluated",
     "enough_loto_types: 3 loto_types evaluated",
-    "comparability_ok: campaigns are comparable with warnings — 2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions."
+    "comparability_ok: campaigns are comparable with warnings — 3 pair(s) checked; all comparable but 3 pair(s) have warnings.  Review warnings before drawing trend conclusions."
   ],
   "blockers": [
-    "No sustained positive action signal: latest=`hold`, consecutive=3 (need ≥2 for consider_promotion or run_more_seeds)",
+    "No sustained positive action signal: latest=`hold`, consecutive=4 (need ≥2 for consider_promotion or run_more_seeds)",
     "Active HIGH regression alert — resolve before promotion review.",
     "No variant passed promotion guardrails (consistent_promote_variants is empty)."
   ],

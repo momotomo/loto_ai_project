@@ -1,16 +1,16 @@
 # Comparability Report
 
-Generated: 2026-03-22T12:00:49.738093+00:00
+Generated: 2026-03-22T16:51:26.136867+00:00
 
 ## Overall Status: ⚠️ COMPARABLE WITH WARNINGS
 
-2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions.
+3 pair(s) checked; all comparable but 3 pair(s) have warnings.  Review warnings before drawing trend conclusions.
 
 | Metric | Value |
 |--------|-------|
-| Total campaigns | 3 |
-| Fully comparable pairs | 2 |
-| Pairs with warnings | 2 |
+| Total campaigns | 4 |
+| Fully comparable pairs | 3 |
+| Pairs with warnings | 3 |
 | Incomparable pairs | 0 |
 
 ## Consecutive Pair Details
@@ -41,6 +41,19 @@ Generated: 2026-03-22T12:00:49.738093+00:00
   - ⚠️ data_fingerprints not recorded for either campaign — cannot verify data consistency (add fingerprints for stronger comparability)
 
 **Rationale**: '2026-03-21_archcomp_b' and '2026-03-22_archcomp_full_a' are comparable with caveats: benchmark family match (compatible): 'archcomp' ↔ 'archcomp_full' — results may differ due to different seed counts or presets; profile mismatch: 'archcomp' vs 'archcomp_full' — same benchmark family but potentially different training preset...
+
+**Suggested action**: Treat metric differences with caution — review warnings before drawing conclusions.
+
+### ⚠️ 2026-03-22_archcomp_full_a → 2026-03-22_archcomp_full_b
+
+- **Comparable**: Yes
+- **Severity**: `warning`
+- **Benchmarks**: `archcomp_full` → `archcomp_full`
+
+**Warnings** (soft — comparable with caveats):
+  - ⚠️ data_fingerprints not recorded for either campaign — cannot verify data consistency (add fingerprints for stronger comparability)
+
+**Rationale**: '2026-03-22_archcomp_full_a' and '2026-03-22_archcomp_full_b' are comparable with caveats: data_fingerprints not recorded for either campaign — cannot verify data consistency (add fingerprints for stronger comparability)
 
 **Suggested action**: Treat metric differences with caution — review warnings before drawing conclusions.
 
