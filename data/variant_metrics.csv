@@ -1,0 +1,5 @@
+rank,variant,logloss_mean,logloss_std,brier_mean,brier_std,ece_mean,ece_std,promote_count_total,hold_count_total,promote_rate,consistent_promote,consistent_hold,loto_types_evaluated
+1,multihot,0.6930963397026062,0.0,0.24997150897979736,0.0,0.35969841480255127,0.0,0,1,0.0,false,true,loto6
+2,deepsets,0.6931289434432983,0.0,0.24999088048934937,0.0,0.3605581521987915,0.0,0,1,0.0,false,true,loto6
+3,legacy,0.697121262550354,0.0,0.251984179019928,0.0,0.3621368110179901,0.0,0,0,0.0,false,false,loto6
+4,settransformer,0.6984404921531677,0.0,0.25264260172843933,0.0,0.3636622428894043,0.0,0,1,0.0,false,true,loto6

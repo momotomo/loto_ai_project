@@ -1,0 +1,624 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-21T05:42:39.231470+00:00",
+  "loto_types": [
+    "loto6"
+  ],
+  "preset": "archcomp",
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "alpha": 0.05,
+  "run_count_per_loto": {
+    "loto6": 1
+  },
+  "overall_summary": {
+    "variants": {
+      "deepsets": {
+        "loto_types_evaluated": [
+          "loto6"
+        ],
+        "logloss": {
+          "mean": 0.6931289434432983,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.6931289434432983
+          }
+        },
+        "brier": {
+          "mean": 0.24999088048934937,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.24999088048934937
+          }
+        },
+        "ece": {
+          "mean": 0.3605581521987915,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.3605581521987915
+          }
+        },
+        "promote_count_total": 0,
+        "hold_count_total": 1
+      },
+      "legacy": {
+        "loto_types_evaluated": [
+          "loto6"
+        ],
+        "logloss": {
+          "mean": 0.697121262550354,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.697121262550354
+          }
+        },
+        "brier": {
+          "mean": 0.251984179019928,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.251984179019928
+          }
+        },
+        "ece": {
+          "mean": 0.3621368110179901,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.3621368110179901
+          }
+        },
+        "promote_count_total": 0,
+        "hold_count_total": 0
+      },
+      "multihot": {
+        "loto_types_evaluated": [
+          "loto6"
+        ],
+        "logloss": {
+          "mean": 0.6930963397026062,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.6930963397026062
+          }
+        },
+        "brier": {
+          "mean": 0.24997150897979736,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.24997150897979736
+          }
+        },
+        "ece": {
+          "mean": 0.35969841480255127,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.35969841480255127
+          }
+        },
+        "promote_count_total": 0,
+        "hold_count_total": 1
+      },
+      "settransformer": {
+        "loto_types_evaluated": [
+          "loto6"
+        ],
+        "logloss": {
+          "mean": 0.6984404921531677,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.6984404921531677
+          }
+        },
+        "brier": {
+          "mean": 0.25264260172843933,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.25264260172843933
+          }
+        },
+        "ece": {
+          "mean": 0.3636622428894043,
+          "std": 0.0,
+          "per_loto": {
+            "loto6": 0.3636622428894043
+          }
+        },
+        "promote_count_total": 0,
+        "hold_count_total": 1
+      }
+    }
+  },
+  "per_loto_summary": {
+    "loto6": {
+      "schema_version": 1,
+      "generated_at": "2026-03-21T05:10:01.895386+00:00",
+      "loto_type": "loto6",
+      "preset": "smoke",
+      "seeds": [
+        42
+      ],
+      "run_count": 1,
+      "alpha": 0.05,
+      "variants": {
+        "deepsets": {
+          "run_count": 1,
+          "logloss": {
+            "mean": 0.6931289434432983,
+            "std": 0.0,
+            "values": [
+              0.6931289434432983
+            ]
+          },
+          "brier": {
+            "mean": 0.24999088048934937,
+            "std": 0.0,
+            "values": [
+              0.24999088048934937
+            ]
+          },
+          "ece": {
+            "mean": 0.3605581521987915,
+            "std": 0.0,
+            "values": [
+              0.3605581521987915
+            ]
+          },
+          "calibration_recommendations": {
+            "none": 1
+          },
+          "promote_count": 0,
+          "hold_count": 1
+        },
+        "legacy": {
+          "run_count": 1,
+          "logloss": {
+            "mean": 0.697121262550354,
+            "std": 0.0,
+            "values": [
+              0.697121262550354
+            ]
+          },
+          "brier": {
+            "mean": 0.251984179019928,
+            "std": 0.0,
+            "values": [
+              0.251984179019928
+            ]
+          },
+          "ece": {
+            "mean": 0.3621368110179901,
+            "std": 0.0,
+            "values": [
+              0.3621368110179901
+            ]
+          },
+          "calibration_recommendations": {
+            "temperature": 1
+          },
+          "promote_count": 0,
+          "hold_count": 0
+        },
+        "multihot": {
+          "run_count": 1,
+          "logloss": {
+            "mean": 0.6930963397026062,
+            "std": 0.0,
+            "values": [
+              0.6930963397026062
+            ]
+          },
+          "brier": {
+            "mean": 0.24997150897979736,
+            "std": 0.0,
+            "values": [
+              0.24997150897979736
+            ]
+          },
+          "ece": {
+            "mean": 0.35969841480255127,
+            "std": 0.0,
+            "values": [
+              0.35969841480255127
+            ]
+          },
+          "calibration_recommendations": {
+            "none": 1
+          },
+          "promote_count": 0,
+          "hold_count": 1
+        },
+        "settransformer": {
+          "run_count": 1,
+          "logloss": {
+            "mean": 0.6984404921531677,
+            "std": 0.0,
+            "values": [
+              0.6984404921531677
+            ]
+          },
+          "brier": {
+            "mean": 0.25264260172843933,
+            "std": 0.0,
+            "values": [
+              0.25264260172843933
+            ]
+          },
+          "ece": {
+            "mean": 0.3636622428894043,
+            "std": 0.0,
+            "values": [
+              0.3636622428894043
+            ]
+          },
+          "calibration_recommendations": {
+            "temperature": 1
+          },
+          "promote_count": 0,
+          "hold_count": 1
+        }
+      },
+      "pairwise_comparisons": {
+        "settransformer_vs_deepsets": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        },
+        "settransformer_vs_multihot": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        },
+        "deepsets_vs_multihot": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        },
+        "settransformer_vs_legacy": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        },
+        "deepsets_vs_legacy": {
+          "run_count": 1,
+          "ci_wins": 1,
+          "permutation_wins": 1,
+          "both_pass_count": 1
+        },
+        "multihot_vs_legacy": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        },
+        "deepsets_vs_best_static": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 1,
+          "both_pass_count": 0
+        },
+        "legacy_vs_best_static": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 1,
+          "both_pass_count": 0
+        },
+        "multihot_vs_best_static": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 1,
+          "both_pass_count": 0
+        },
+        "settransformer_vs_best_static": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 1,
+          "both_pass_count": 0
+        }
+      }
+    }
+  },
+  "variant_ranking": {
+    "by_logloss": [
+      {
+        "rank": 1,
+        "variant": "multihot",
+        "mean": 0.6930963397026062
+      },
+      {
+        "rank": 2,
+        "variant": "deepsets",
+        "mean": 0.6931289434432983
+      },
+      {
+        "rank": 3,
+        "variant": "legacy",
+        "mean": 0.697121262550354
+      },
+      {
+        "rank": 4,
+        "variant": "settransformer",
+        "mean": 0.6984404921531677
+      }
+    ],
+    "by_brier": [
+      {
+        "rank": 1,
+        "variant": "multihot",
+        "mean": 0.24997150897979736
+      },
+      {
+        "rank": 2,
+        "variant": "deepsets",
+        "mean": 0.24999088048934937
+      },
+      {
+        "rank": 3,
+        "variant": "legacy",
+        "mean": 0.251984179019928
+      },
+      {
+        "rank": 4,
+        "variant": "settransformer",
+        "mean": 0.25264260172843933
+      }
+    ],
+    "by_ece": [
+      {
+        "rank": 1,
+        "variant": "multihot",
+        "mean": 0.35969841480255127
+      },
+      {
+        "rank": 2,
+        "variant": "deepsets",
+        "mean": 0.3605581521987915
+      },
+      {
+        "rank": 3,
+        "variant": "legacy",
+        "mean": 0.3621368110179901
+      },
+      {
+        "rank": 4,
+        "variant": "settransformer",
+        "mean": 0.3636622428894043
+      }
+    ],
+    "promote_counts": {
+      "deepsets": {
+        "promote_count": 0,
+        "hold_count": 1,
+        "promote_rate": 0.0
+      },
+      "legacy": {
+        "promote_count": 0,
+        "hold_count": 0,
+        "promote_rate": 0.0
+      },
+      "multihot": {
+        "promote_count": 0,
+        "hold_count": 1,
+        "promote_rate": 0.0
+      },
+      "settransformer": {
+        "promote_count": 0,
+        "hold_count": 1,
+        "promote_rate": 0.0
+      }
+    },
+    "calibration_recommendations": {
+      "deepsets": {
+        "none": 1
+      },
+      "legacy": {
+        "temperature": 1
+      },
+      "multihot": {
+        "none": 1
+      },
+      "settransformer": {
+        "temperature": 1
+      }
+    }
+  },
+  "pairwise_comparison_summary": {
+    "settransformer_vs_deepsets": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 0,
+        "both_pass_count": 0
+      }
+    },
+    "settransformer_vs_multihot": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 0,
+        "both_pass_count": 0
+      }
+    },
+    "deepsets_vs_multihot": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 0,
+        "both_pass_count": 0
+      }
+    },
+    "settransformer_vs_legacy": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 0,
+        "both_pass_count": 0
+      }
+    },
+    "deepsets_vs_legacy": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 1,
+          "permutation_wins": 1,
+          "both_pass_count": 1
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 1,
+        "permutation_wins": 1,
+        "both_pass_count": 1
+      }
+    },
+    "multihot_vs_legacy": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 0,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 0,
+        "both_pass_count": 0
+      }
+    },
+    "deepsets_vs_best_static": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 1,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 1,
+        "both_pass_count": 0
+      }
+    },
+    "legacy_vs_best_static": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 1,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 1,
+        "both_pass_count": 0
+      }
+    },
+    "multihot_vs_best_static": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 1,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 1,
+        "both_pass_count": 0
+      }
+    },
+    "settransformer_vs_best_static": {
+      "per_loto": {
+        "loto6": {
+          "run_count": 1,
+          "ci_wins": 0,
+          "permutation_wins": 1,
+          "both_pass_count": 0
+        }
+      },
+      "overall": {
+        "run_count": 1,
+        "ci_wins": 0,
+        "permutation_wins": 1,
+        "both_pass_count": 0
+      }
+    }
+  },
+  "promotion_recommendation_summary": {
+    "deepsets": {
+      "promoted_in": [],
+      "held_in": [
+        "loto6"
+      ],
+      "consistent_promote": false,
+      "consistent_hold": true
+    },
+    "legacy": {
+      "promoted_in": [],
+      "held_in": [],
+      "consistent_promote": false,
+      "consistent_hold": false
+    },
+    "multihot": {
+      "promoted_in": [],
+      "held_in": [
+        "loto6"
+      ],
+      "consistent_promote": false,
+      "consistent_hold": true
+    },
+    "settransformer": {
+      "promoted_in": [],
+      "held_in": [
+        "loto6"
+      ],
+      "consistent_promote": false,
+      "consistent_hold": true
+    }
+  }
+}

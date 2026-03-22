@@ -6,8 +6,20 @@ import subprocess
 from datetime import datetime, timezone
 
 import numpy as np
-import pandas as pd
+# Fix: TF 2.20 on ARM64 macOS (M1/M2) absl symbol conflict deadlock.
+# Root cause: macOS flat-namespace dynamic linker resolves
+# AbslInternalPerThreadSemWait_lts_20250127 from pyarrow's libarrow.2300.dylib
+# when pandas/pyarrow is imported first, causing TF's absl::Notification to use
+# Arrow's pthread primitives and never wake the waiting thread.
+# Solution: import tensorflow BEFORE pandas/pyarrow so TF's absl loads first.
+os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
+os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
 import tensorflow as tf
+tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(1)
+tf.config.run_functions_eagerly(True)
+tf.data.experimental.enable_debug_mode()
+import pandas as pd  # noqa: E402 — must come AFTER tensorflow (see fix above)
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.layers import AveragePooling2D, BatchNormalization, Dense, Dropout, Input, LSTM, Reshape

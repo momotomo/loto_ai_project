@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.697117+00:00",
+  "ready_for_promotion_review": false,
+  "candidate_variant": "settransformer",
+  "accepted_campaign_count": 2,
+  "counts_toward_promotion_readiness_count": 2,
+  "accepted_campaign_window": [
+    "2026-03-21_archcomp_a_retry",
+    "2026-03-21_archcomp_b"
+  ],
+  "consecutive_accepted_positive_signals": 0,
+  "consecutive_accepted_settransformer_signal": 0,
+  "consecutive_same_action_accepted_only": 2,
+  "consecutive_positive_signal_for_settransformer_accepted_only": 0,
+  "promotion_gate_status": "yellow",
+  "regression_alert_level": "none",
+  "conditions_passed": [
+    "accepted_campaign_count: 2 accepted campaign(s) (≥2 required)",
+    "no_high_regression: regression alert level is 'none'",
+    "promotion_gate_yellow: promotion gate is YELLOW (some gate conditions met)"
+  ],
+  "blockers": [
+    "Latest accepted action `hold` is not a positive signal. Need ≥2 consecutive accepted campaigns with `consider_promotion` or `run_more_seeds`.",
+    "No variant passed promotion guardrails in the latest accepted campaign (consistent_promote_variants is empty)."
+  ],
+  "rationale": "2 blocker(s) prevent entering promotion review. Accepted campaigns: 2. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.",
+  "recommended_next_step": "Resolve the blockers listed above, then re-run an archcomp or archcomp_full campaign. Do NOT enter promotion review until all blockers are cleared."
+}

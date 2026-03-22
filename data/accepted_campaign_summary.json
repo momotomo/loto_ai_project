@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.696876+00:00",
+  "total_campaigns_in_history": 2,
+  "accepted_campaign_count": 2,
+  "counts_toward_promotion_readiness_count": 2,
+  "accepted_campaign_names": [
+    "2026-03-21_archcomp_a_retry",
+    "2026-03-21_archcomp_b"
+  ],
+  "counts_toward_promotion_readiness_names": [
+    "2026-03-21_archcomp_a_retry",
+    "2026-03-21_archcomp_b"
+  ],
+  "action_history": [
+    {
+      "campaign_name": "2026-03-21_archcomp_a_retry",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true,
+      "pma_signal": false
+    },
+    {
+      "campaign_name": "2026-03-21_archcomp_b",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true,
+      "pma_signal": false
+    }
+  ],
+  "action_distribution": {
+    "hold": 2
+  },
+  "challenger_distribution": {
+    "settransformer": 2
+  },
+  "consecutive_accepted_positive_signals": 0,
+  "consecutive_accepted_settransformer_signal": 0,
+  "profile_distribution": {
+    "archcomp": 2
+  },
+  "benchmark_distribution": {
+    "archcomp": 2
+  },
+  "seed_counts_per_accepted_campaign": [
+    3,
+    3
+  ],
+  "loto_types_per_accepted_campaign": [
+    [
+      "loto6",
+      "loto7",
+      "miniloto"
+    ],
+    [
+      "loto6",
+      "loto7",
+      "miniloto"
+    ]
+  ],
+  "comparability_issues_within_accepted": [],
+  "latest_accepted_campaign_name": "2026-03-21_archcomp_b",
+  "latest_accepted_action": "hold",
+  "latest_accepted_challenger": "settransformer",
+  "latest_accepted_pma_signal": false
+}

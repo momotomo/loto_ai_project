@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.693652+00:00",
+  "total_campaigns": 2,
+  "recommendation_stability": {
+    "total_campaigns": 2,
+    "total_accepted_campaigns": 2,
+    "latest_action": "hold",
+    "latest_challenger": "settransformer",
+    "consecutive_same_action": 2,
+    "consecutive_same_challenger": 2,
+    "consecutive_keep_production": 2,
+    "consecutive_run_more_seeds": 0,
+    "consecutive_positive_signal_for_settransformer": 0,
+    "consecutive_positive_signal_for_deepsets": 2,
+    "consecutive_same_action_accepted_only": 2,
+    "consecutive_positive_signal_for_settransformer_accepted_only": 0
+  },
+  "campaigns": [
+    {
+      "campaign_name": "2026-03-21_archcomp_a_retry",
+      "profile_name": "archcomp",
+      "benchmark_name": "archcomp",
+      "generated_at": "2026-03-22T01:36:29.966372+00:00",
+      "started_at": "2026-03-22T01:04:22.520319+00:00",
+      "finished_at": "2026-03-22T01:36:29.968655+00:00",
+      "campaign_dir": "/Users/kasuyatomohiro/loto_ai_project/campaigns/2026-03-21_archcomp_a_retry",
+      "loto_types": [
+        "loto6",
+        "loto7",
+        "miniloto"
+      ],
+      "preset": "archcomp",
+      "seeds": [
+        42,
+        123,
+        456
+      ],
+      "evaluation_model_variants": "legacy,multihot,deepsets,settransformer",
+      "evaluation_calibration_methods": "none,temperature,isotonic",
+      "data_fingerprints": {},
+      "recommended_next_action": "hold",
+      "recommended_challenger": "settransformer",
+      "keep_production_as_is": true,
+      "whether_to_try_pma_or_isab_next": false,
+      "best_variant_by_logloss": "settransformer",
+      "consistent_promote_variants": [],
+      "blockers_count": 1,
+      "variant_ranking_summary": [
+        {
+          "rank": 1,
+          "variant": "settransformer",
+          "logloss_mean": 0.5126700434419843
+        },
+        {
+          "rank": 2,
+          "variant": "multihot",
+          "logloss_mean": 0.5253438585334355
+        },
+        {
+          "rank": 3,
+          "variant": "deepsets",
+          "logloss_mean": 0.5306513177023994
+        },
+        {
+          "rank": 4,
+          "variant": "legacy",
+          "logloss_mean": 0.5371345380942026
+        }
+      ],
+      "key_pairwise_signals": {
+        "settransformer_vs_deepsets": {
+          "run_count": 9,
+          "both_pass_count": 3,
+          "both_pass_rate": 0.3333
+        },
+        "settransformer_vs_multihot": {
+          "run_count": 9,
+          "both_pass_count": 1,
+          "both_pass_rate": 0.1111
+        },
+        "deepsets_vs_multihot": {
+          "run_count": 9,
+          "both_pass_count": 0,
+          "both_pass_rate": 0.0
+        },
+        "settransformer_vs_legacy": {
+          "run_count": 9,
+          "both_pass_count": 2,
+          "both_pass_rate": 0.2222
+        },
+        "deepsets_vs_legacy": {
+          "run_count": 9,
+          "both_pass_count": 2,
+          "both_pass_rate": 0.2222
+        },
+        "multihot_vs_legacy": {
+          "run_count": 9,
+          "both_pass_count": 2,
+          "both_pass_rate": 0.2222
+        },
+        "deepsets_vs_best_static": {
+          "run_count": 9,
+          "both_pass_count": 0,
+          "both_pass_rate": 0.0
+        },
+        "legacy_vs_best_static": {
+          "run_count": 9,
+          "both_pass_count": 1,
+          "both_pass_rate": 0.1111
+        },
+        "multihot_vs_best_static": {
+          "run_count": 9,
+          "both_pass_count": 0,
+          "both_pass_rate": 0.0
+        },
+        "settransformer_vs_best_static": {
+          "run_count": 9,
+          "both_pass_count": 0,
+          "both_pass_rate": 0.0
+        }
+      },
+      "accepted_for_decision_use": true,
+      "counts_toward_promotion_readiness": true,
+      "decision_benchmark_name": "archcomp"
+    },
+    {
+      "campaign_name": "2026-03-21_archcomp_b",
+      "profile_name": "archcomp",
+      "benchmark_name": "archcomp",
+      "generated_at": "2026-03-22T02:06:53.690599+00:00",
+      "started_at": "2026-03-22T01:36:35.913113+00:00",
+      "finished_at": "2026-03-22T02:06:53.693060+00:00",
+      "campaign_dir": "/Users/kasuyatomohiro/loto_ai_project/campaigns/2026-03-21_archcomp_b",
+      "loto_types": [
+        "loto6",
+        "loto7",
+        "miniloto"
+      ],
+      "preset": "archcomp",
+      "seeds": [
+        42,
+        123,
+        456
+      ],
+      "evaluation_model_variants": "legacy,multihot,deepsets,settransformer",
+      "evaluation_calibration_methods": "none,temperature,isotonic",
+      "data_fingerprints": {},
+      "recommended_next_action": "hold",
+      "recommended_challenger": "settransformer",
+      "keep_production_as_is": true,
+      "whether_to_try_pma_or_isab_next": false,
+      "best_variant_by_logloss": "settransformer",
+      "consistent_promote_variants": [],
+      "blockers_count": 1,
+      "variant_ranking_summary": [
+        {
+          "rank": 1,
+          "variant": "settransformer",
+          "logloss_mean": 0.5126700434419843
+        },
+        {
+          "rank": 2,
+          "variant": "multihot",
+          "logloss_mean": 0.5253438585334355
+        },
+        {
+          "rank": 3,
+          "variant": "deepsets",
+          "logloss_mean": 0.5306513177023994
+        },
+        {
+          "rank": 4,
+          "variant": "legacy",
+          "logloss_mean": 0.5371345380942026
+        }
+      ],
+      "key_pairwise_signals": {
+        "settransformer_vs_deepsets": {
+          "run_count": 9,
+          "both_pass_count": 3,
+          "both_pass_rate": 0.3333
+        },
+        "settransformer_vs_multihot": {
+          "run_count": 9,
+          "both_pass_count": 1,
+          "both_pass_rate": 0.1111
+        },
+        "deepsets_vs_multihot": {
+          "run_count": 9,
+          "both_pass_count": 0,
+          "both_pass_rate": 0.0
+        },
+        "settransformer_vs_legacy": {
+          "run_count": 9,
+          "both_pass_count": 2,
+          "both_pass_rate": 0.2222
+        },
+        "deepsets_vs_legacy": {
+          "run_count": 9,
+          "both_pass_count": 2,
+          "both_pass_rate": 0.2222
+        },
+        "multihot_vs_legacy": {
+          "run_count": 9,
+          "both_pass_count": 2,
+          "both_pass_rate": 0.2222
+        },
+        "deepsets_vs_best_static": {
+          "run_count": 9,
+          "both_pass_count": 0,
+          "both_pass_rate": 0.0
+        },
+        "legacy_vs_best_static": {
+          "run_count": 9,
+          "both_pass_count": 1,
+          "both_pass_rate": 0.1111
+        },
+        "multihot_vs_best_static": {
+          "run_count": 9,
+          "both_pass_count": 0,
+          "both_pass_rate": 0.0
+        },
+        "settransformer_vs_best_static": {
+          "run_count": 9,
+          "both_pass_count": 0,
+          "both_pass_rate": 0.0
+        }
+      },
+      "accepted_for_decision_use": true,
+      "counts_toward_promotion_readiness": true,
+      "decision_benchmark_name": "archcomp"
+    }
+  ]
+}

@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.695455+00:00",
+  "tracked_window_size": 5,
+  "total_campaigns": 2,
+  "campaigns_considered": [
+    "2026-03-21_archcomp_a_retry",
+    "2026-03-21_archcomp_b"
+  ],
+  "variant_rank_history": {
+    "deepsets": {
+      "ranks": [
+        3,
+        3
+      ],
+      "rank_trend": "stable"
+    },
+    "legacy": {
+      "ranks": [
+        4,
+        4
+      ],
+      "rank_trend": "stable"
+    },
+    "multihot": {
+      "ranks": [
+        2,
+        2
+      ],
+      "rank_trend": "stable"
+    },
+    "settransformer": {
+      "ranks": [
+        1,
+        1
+      ],
+      "rank_trend": "stable"
+    }
+  },
+  "metric_trends": {
+    "deepsets": {
+      "logloss": {
+        "values": [
+          0.5306513177023994,
+          0.5306513177023994
+        ],
+        "trend": "stable"
+      }
+    },
+    "legacy": {
+      "logloss": {
+        "values": [
+          0.5371345380942026,
+          0.5371345380942026
+        ],
+        "trend": "stable"
+      }
+    },
+    "multihot": {
+      "logloss": {
+        "values": [
+          0.5253438585334355,
+          0.5253438585334355
+        ],
+        "trend": "stable"
+      }
+    },
+    "settransformer": {
+      "logloss": {
+        "values": [
+          0.5126700434419843,
+          0.5126700434419843
+        ],
+        "trend": "stable"
+      }
+    }
+  },
+  "recommendation_history": [
+    {
+      "campaign_name": "2026-03-21_archcomp_a_retry",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true
+    },
+    {
+      "campaign_name": "2026-03-21_archcomp_b",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true
+    }
+  ],
+  "keep_production_streak": 2,
+  "pairwise_signal_history": {
+    "deepsets_vs_best_static": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 9
+      }
+    ],
+    "deepsets_vs_legacy": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.2222,
+        "both_pass_count": 2,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.2222,
+        "both_pass_count": 2,
+        "run_count": 9
+      }
+    ],
+    "deepsets_vs_multihot": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 9
+      }
+    ],
+    "legacy_vs_best_static": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.1111,
+        "both_pass_count": 1,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.1111,
+        "both_pass_count": 1,
+        "run_count": 9
+      }
+    ],
+    "multihot_vs_best_static": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 9
+      }
+    ],
+    "multihot_vs_legacy": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.2222,
+        "both_pass_count": 2,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.2222,
+        "both_pass_count": 2,
+        "run_count": 9
+      }
+    ],
+    "settransformer_vs_best_static": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.0,
+        "both_pass_count": 0,
+        "run_count": 9
+      }
+    ],
+    "settransformer_vs_deepsets": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.3333,
+        "both_pass_count": 3,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.3333,
+        "both_pass_count": 3,
+        "run_count": 9
+      }
+    ],
+    "settransformer_vs_legacy": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.2222,
+        "both_pass_count": 2,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.2222,
+        "both_pass_count": 2,
+        "run_count": 9
+      }
+    ],
+    "settransformer_vs_multihot": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "both_pass_rate": 0.1111,
+        "both_pass_count": 1,
+        "run_count": 9
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "both_pass_rate": 0.1111,
+        "both_pass_count": 1,
+        "run_count": 9
+      }
+    ]
+  },
+  "dominant_action": "hold",
+  "dominant_challenger": "settransformer",
+  "action_distribution": {
+    "hold": 2
+  },
+  "comparability_overall": true,
+  "comparability_severity": "warning",
+  "comparability_note": "1 pair(s) checked; all comparable but 1 pair(s) have warnings.  Review warnings before drawing trend conclusions."
+}

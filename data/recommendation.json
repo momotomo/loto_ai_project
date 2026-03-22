@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-21T05:42:39.232793+00:00",
+  "based_on": "cross_loto_summary",
+  "recommended_next_action": "run_more_seeds",
+  "recommended_challenger": "multihot",
+  "keep_production_as_is": true,
+  "evidence_summary": {
+    "best_variant_by_logloss": "multihot",
+    "consistent_promote_variants": [],
+    "pairwise_clear_winner": null,
+    "total_runs_across_loto_types": 1
+  },
+  "blockers_to_promotion": [
+    "No variant consistently passed promotion guardrails across loto_types.",
+    "settransformer_vs_deepsets: no run showed both CI and permutation significance."
+  ],
+  "whether_to_try_pma_or_isab_next": false,
+  "next_experiment_recommendations": [
+    "Increase seed count to ≥5 and re-run cross-loto comparison.",
+    "settransformer vs deepsets advantage is not yet clear. PMA / ISAB exploration should wait until settransformer shows consistent benefit."
+  ]
+}

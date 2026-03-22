@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.694950+00:00",
+  "total_campaigns": 2,
+  "comparable_pairs": 1,
+  "warning_pairs": 1,
+  "incomparable_pairs": 0,
+  "overall_comparable": true,
+  "overall_severity": "warning",
+  "pairs": [
+    {
+      "schema_version": 1,
+      "campaign_a": "2026-03-21_archcomp_a_retry",
+      "campaign_b": "2026-03-21_archcomp_b",
+      "benchmark_a": "archcomp",
+      "benchmark_b": "archcomp",
+      "comparable": true,
+      "severity": "warning",
+      "failed_checks": [],
+      "warnings": [
+        "data_fingerprints not recorded for either campaign — cannot verify data consistency (add fingerprints for stronger comparability)"
+      ],
+      "rationale": "'2026-03-21_archcomp_a_retry' and '2026-03-21_archcomp_b' are comparable with caveats: data_fingerprints not recorded for either campaign — cannot verify data consistency (add fingerprints for stronger comparability)",
+      "suggested_action": "Treat metric differences with caution — review warnings before drawing conclusions."
+    }
+  ],
+  "summary": "1 pair(s) checked; all comparable but 1 pair(s) have warnings.  Review warnings before drawing trend conclusions."
+}

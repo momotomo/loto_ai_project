@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.697332+00:00",
+  "ready_for_promotion_review": false,
+  "candidate_variant": "settransformer",
+  "accepted_campaign_count": 2,
+  "counts_toward_promotion_readiness_count": 2,
+  "accepted_campaign_names": [
+    "2026-03-21_archcomp_a_retry",
+    "2026-03-21_archcomp_b"
+  ],
+  "counts_toward_promotion_readiness_names": [
+    "2026-03-21_archcomp_a_retry",
+    "2026-03-21_archcomp_b"
+  ],
+  "consecutive_accepted_positive_signals": 0,
+  "consecutive_accepted_settransformer_signal": 0,
+  "promotion_gate_status": "yellow",
+  "regression_alert_level": "none",
+  "comparability_ok": true,
+  "comparability_severity": "warning",
+  "conditions_passed": [
+    "accepted_campaign_count: 2 accepted campaign(s) (≥2 required)",
+    "no_high_regression: regression alert level is 'none'",
+    "promotion_gate_yellow: promotion gate is YELLOW (some gate conditions met)"
+  ],
+  "blockers": [
+    "Latest accepted action `hold` is not a positive signal. Need ≥2 consecutive accepted campaigns with `consider_promotion` or `run_more_seeds`.",
+    "No variant passed promotion guardrails in the latest accepted campaign (consistent_promote_variants is empty)."
+  ],
+  "rationale": "2 blocker(s) prevent entering promotion review. Accepted campaigns: 2. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.",
+  "recommended_next_step": "Resolve the blockers listed above, then re-run an archcomp or archcomp_full campaign. Do NOT enter promotion review until all blockers are cleared.",
+  "action_history": [
+    {
+      "campaign_name": "2026-03-21_archcomp_a_retry",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true,
+      "pma_signal": false
+    },
+    {
+      "campaign_name": "2026-03-21_archcomp_b",
+      "action": "hold",
+      "challenger": "settransformer",
+      "keep_production": true,
+      "pma_signal": false
+    }
+  ],
+  "action_distribution": {
+    "hold": 2
+  },
+  "challenger_distribution": {
+    "settransformer": 2
+  },
+  "latest_accepted_evidence": {
+    "campaign_name": "2026-03-21_archcomp_b",
+    "profile_name": "archcomp",
+    "benchmark_name": "archcomp",
+    "generated_at": "2026-03-22T02:06:53.690599+00:00",
+    "seeds": [
+      42,
+      123,
+      456
+    ],
+    "loto_types": [
+      "loto6",
+      "loto7",
+      "miniloto"
+    ],
+    "recommended_next_action": "hold",
+    "recommended_challenger": "settransformer",
+    "keep_production_as_is": true,
+    "best_variant_by_logloss": "settransformer",
+    "consistent_promote_variants": [],
+    "blockers_count": 1,
+    "variant_ranking_summary": [
+      {
+        "rank": 1,
+        "variant": "settransformer",
+        "logloss_mean": 0.5126700434419843
+      },
+      {
+        "rank": 2,
+        "variant": "multihot",
+        "logloss_mean": 0.5253438585334355
+      },
+      {
+        "rank": 3,
+        "variant": "deepsets",
+        "logloss_mean": 0.5306513177023994
+      },
+      {
+        "rank": 4,
+        "variant": "legacy",
+        "logloss_mean": 0.5371345380942026
+      }
+    ],
+    "whether_to_try_pma_or_isab_next": false
+  },
+  "accepted_campaign_summary": {
+    "schema_version": 1,
+    "generated_at": "2026-03-22T02:06:53.697317+00:00",
+    "total_campaigns_in_history": 2,
+    "accepted_campaign_count": 2,
+    "counts_toward_promotion_readiness_count": 2,
+    "accepted_campaign_names": [
+      "2026-03-21_archcomp_a_retry",
+      "2026-03-21_archcomp_b"
+    ],
+    "counts_toward_promotion_readiness_names": [
+      "2026-03-21_archcomp_a_retry",
+      "2026-03-21_archcomp_b"
+    ],
+    "action_history": [
+      {
+        "campaign_name": "2026-03-21_archcomp_a_retry",
+        "action": "hold",
+        "challenger": "settransformer",
+        "keep_production": true,
+        "pma_signal": false
+      },
+      {
+        "campaign_name": "2026-03-21_archcomp_b",
+        "action": "hold",
+        "challenger": "settransformer",
+        "keep_production": true,
+        "pma_signal": false
+      }
+    ],
+    "action_distribution": {
+      "hold": 2
+    },
+    "challenger_distribution": {
+      "settransformer": 2
+    },
+    "consecutive_accepted_positive_signals": 0,
+    "consecutive_accepted_settransformer_signal": 0,
+    "profile_distribution": {
+      "archcomp": 2
+    },
+    "benchmark_distribution": {
+      "archcomp": 2
+    },
+    "seed_counts_per_accepted_campaign": [
+      3,
+      3
+    ],
+    "loto_types_per_accepted_campaign": [
+      [
+        "loto6",
+        "loto7",
+        "miniloto"
+      ],
+      [
+        "loto6",
+        "loto7",
+        "miniloto"
+      ]
+    ],
+    "comparability_issues_within_accepted": [],
+    "latest_accepted_campaign_name": "2026-03-21_archcomp_b",
+    "latest_accepted_action": "hold",
+    "latest_accepted_challenger": "settransformer",
+    "latest_accepted_pma_signal": false
+  }
+}
