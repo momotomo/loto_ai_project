@@ -1,6 +1,6 @@
 # Decision Benchmark Policy (Benchmark Lock)
 
-Generated: 2026-03-22T02:06:53.694634+00:00
+Generated: 2026-03-22T12:00:49.737748+00:00
 
 > **This document defines the conditions a campaign must satisfy to be**
 > **counted as valid evidence for promotion decision-making.**

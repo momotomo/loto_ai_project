@@ -1,30 +1,30 @@
 # Promotion Readiness Gate
 
-Generated: 2026-03-22T02:06:53.696115+00:00
+Generated: 2026-03-22T12:00:49.739419+00:00
 
-## Gate Status: 🟡 **YELLOW**
+## Gate Status: 🔴 **RED**
 
-> Gate is YELLOW: Some conditions met (5 passed, 2 blockers). Signal is promising but not yet conclusive.
+> Gate is RED: Too many blockers (3) for promotion review. Current evidence is insufficient or contradictory.
 
 - **Candidate variant**: `settransformer`
-- **Evidence window**: 2 recent campaign(s)
+- **Evidence window**: 3 recent campaign(s)
 
 ## Conditions Passed ✅
 
-- consistent_challenger: 'settransformer' recommended 2 consecutive times
-- no_high_regression: regression alert level is 'none'
-- enough_seeds: 3 seeds evaluated
+- consistent_challenger: 'settransformer' recommended 3 consecutive times
+- enough_seeds: 5 seeds evaluated
 - enough_loto_types: 3 loto_types evaluated
-- comparability_ok: campaigns are comparable with warnings — 1 pair(s) checked; all comparable but 1 pair(s) have warnings.  Review warnings before drawing trend conclusions.
+- comparability_ok: campaigns are comparable with warnings — 2 pair(s) checked; all comparable but 2 pair(s) have warnings.  Review warnings before drawing trend conclusions.
 
 ## Blockers ❌
 
-- No sustained positive action signal: latest=`hold`, consecutive=2 (need ≥2 for consider_promotion or run_more_seeds)
+- No sustained positive action signal: latest=`hold`, consecutive=3 (need ≥2 for consider_promotion or run_more_seeds)
+- Active HIGH regression alert — resolve before promotion review.
 - No variant passed promotion guardrails (consistent_promote_variants is empty).
 
 ## Next Required Action
 
-Address blockers above. Consider running archcomp_full for more seeds, or wait for another campaign to confirm the trend.
+Resolve blockers above before reconsidering promotion. Run another campaign (archcomp or archcomp_full) to gather more evidence.
 
 > **Important**: This gate indicates whether to *enter promotion review*,
 > not whether to *promote to production*. Production is never changed automatically.

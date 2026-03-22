@@ -1,6 +1,6 @@
 # Promotion Review Readiness
 
-Generated: 2026-03-22T02:06:53.697117+00:00
+Generated: 2026-03-22T12:00:49.740049+00:00
 
 ## Status: ❌ NOT YET READY
 
@@ -8,32 +8,33 @@ Generated: 2026-03-22T02:06:53.697117+00:00
 > Production is NEVER changed automatically. This is a human decision gate only.  
 > Based exclusively on accepted campaigns (decision benchmark policy compliant).
 
-2 blocker(s) prevent entering promotion review. Accepted campaigns: 2. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
+4 blocker(s) prevent entering promotion review. Accepted campaigns: 3. Run more accepted campaigns (archcomp or archcomp_full) to accumulate evidence.
 
 | Metric | Value |
 |--------|-------|
-| accepted_campaign_count | **2** |
-| counts_toward_promotion_readiness | 2 |
+| accepted_campaign_count | **3** |
+| counts_toward_promotion_readiness | 3 |
 | candidate_variant | `settransformer` |
 | consecutive_accepted_positive_signals | 0 |
 | consecutive_accepted_settransformer_signal | 0 |
-| promotion_gate_status | 🟡 `yellow` |
-| regression_alert_level | ✅ `none` |
+| promotion_gate_status | 🔴 `red` |
+| regression_alert_level | 🔴 `high` |
 
 ## Accepted Campaign Window
 
 - `2026-03-21_archcomp_a_retry`
 - `2026-03-21_archcomp_b`
+- `2026-03-22_archcomp_full_a`
 
 ## Conditions Passed ✅
 
-- accepted_campaign_count: 2 accepted campaign(s) (≥2 required)
-- no_high_regression: regression alert level is 'none'
-- promotion_gate_yellow: promotion gate is YELLOW (some gate conditions met)
+- accepted_campaign_count: 3 accepted campaign(s) (≥2 required)
 
 ## Blockers ❌
 
 - ❌ Latest accepted action `hold` is not a positive signal. Need ≥2 consecutive accepted campaigns with `consider_promotion` or `run_more_seeds`.
+- ❌ Active HIGH regression alert — resolve before entering promotion review.
+- ❌ promotion_gate_red: promotion gate is RED. Resolve gate blockers before promotion review. See `promotion_gate.md` for details.
 - ❌ No variant passed promotion guardrails in the latest accepted campaign (consistent_promote_variants is empty).
 
 ## Recommended Next Step

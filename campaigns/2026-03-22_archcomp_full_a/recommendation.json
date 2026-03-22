@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T12:00:49.735055+00:00",
+  "based_on": "cross_loto_summary",
+  "recommended_next_action": "hold",
+  "recommended_challenger": "settransformer",
+  "keep_production_as_is": true,
+  "evidence_summary": {
+    "best_variant_by_logloss": "settransformer",
+    "consistent_promote_variants": [],
+    "pairwise_clear_winner": null,
+    "total_runs_across_loto_types": 15
+  },
+  "blockers_to_promotion": [
+    "No variant consistently passed promotion guardrails across loto_types."
+  ],
+  "whether_to_try_pma_or_isab_next": false,
+  "next_experiment_recommendations": [
+    "settransformer vs deepsets advantage is not yet clear. PMA / ISAB exploration should wait until settransformer shows consistent benefit."
+  ]
+}
