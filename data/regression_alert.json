@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.695911+00:00",
+  "alert_level": "none",
+  "comparability_caution": false,
+  "comparability_note": "1 pair(s) checked; all comparable but 1 pair(s) have warnings.  Review warnings before drawing trend conclusions.",
+  "latest_campaign": "2026-03-21_archcomp_b",
+  "baseline_campaigns": [
+    "2026-03-21_archcomp_a_retry"
+  ],
+  "affected_variants": [],
+  "ranking_drop": {},
+  "metric_regressions": {},
+  "pairwise_signal_loss": {},
+  "recommendation_instability": {
+    "action_changed": false,
+    "prev_action": "hold",
+    "curr_action": "hold",
+    "challenger_changed": false,
+    "prev_challenger": "settransformer",
+    "curr_challenger": "settransformer"
+  },
+  "suspected_causes": [],
+  "summary": "No significant regression detected since the previous campaign."
+}

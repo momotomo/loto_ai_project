@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "policy_name": "standard_promotion_decision_policy",
+  "active_decision_benchmarks": [
+    "archcomp",
+    "archcomp_full"
+  ],
+  "allowed_profiles": [
+    "archcomp",
+    "archcomp_full"
+  ],
+  "excluded_profiles": [
+    "archcomp_lite"
+  ],
+  "excluded_profiles_reason": "archcomp_lite covers loto6 only and uses a reduced seed count. It is intended for quick sanity checks, NOT for promotion decisions.",
+  "required_loto_types": [
+    "loto6",
+    "loto7",
+    "miniloto"
+  ],
+  "required_variants": [
+    "legacy",
+    "multihot",
+    "deepsets",
+    "settransformer"
+  ],
+  "required_calibration_methods": [
+    "none",
+    "temperature",
+    "isotonic"
+  ],
+  "minimum_seed_policy": {
+    "archcomp": 3,
+    "archcomp_full": 5,
+    "description": "archcomp requires ≥3 seeds; archcomp_full requires ≥5 seeds. Fewer seeds yield unreliable variance estimates."
+  },
+  "comparability_required": true,
+  "comparability_required_reason": "A campaign that is not comparable with its predecessors cannot contribute to a reliable trend signal. comparable=False is always a hard blocker.",
+  "promotion_review_policy": "To enter promotion review, the operator must observe: (1) ≥2 consecutive accepted campaigns with recommend_next_action in {consider_promotion, run_more_seeds}, (2) promotion gate status = green, (3) manual per-loto evidence review confirms signal is genuine, (4) no active HIGH regression alert. Production is never changed automatically.",
+  "accepted_only_counting_policy": "Stability metrics (consecutive_same_action, consecutive_positive_signal_*) are computed over ALL campaigns for trend awareness. The *_accepted_only variants count only campaigns where accepted_for_decision_use=True and counts_toward_promotion_readiness=True. Use the accepted_only counts for promotion readiness decisions.",
+  "pma_isab_precondition_policy": "Before exploring PMA / ISAB or HPO: (1) ≥2 consecutive ACCEPTED campaigns with positive settransformer signal, (2) promotion gate is GREEN on an accepted campaign, (3) no active HIGH regression alert. Do NOT proceed based on archcomp_lite or non-accepted campaigns.",
+  "generated_at": "2026-03-22T02:06:53.694634+00:00",
+  "active_benchmark_definitions": {
+    "archcomp": {
+      "benchmark_name": "archcomp",
+      "allowed_profiles": [
+        "archcomp"
+      ],
+      "compatible_benchmarks": [
+        "archcomp_full"
+      ],
+      "expected_loto_types": [
+        "loto6",
+        "loto7",
+        "miniloto"
+      ],
+      "expected_variants": [
+        "legacy",
+        "multihot",
+        "deepsets",
+        "settransformer"
+      ],
+      "min_seed_count": 3,
+      "allowed_seed_sets": [
+        [
+          42,
+          123,
+          456
+        ]
+      ],
+      "expected_calibration_methods": [
+        "none",
+        "temperature",
+        "isotonic"
+      ],
+      "evaluation_window_policy": "archcomp_preset",
+      "fold_policy": "archcomp_preset",
+      "data_freshness_policy": "same_fingerprint_family",
+      "description": "Standard 3-seed cross-loto comparison.  Default for campaign decisions."
+    },
+    "archcomp_full": {
+      "benchmark_name": "archcomp_full",
+      "allowed_profiles": [
+        "archcomp_full"
+      ],
+      "compatible_benchmarks": [
+        "archcomp"
+      ],
+      "expected_loto_types": [
+        "loto6",
+        "loto7",
+        "miniloto"
+      ],
+      "expected_variants": [
+        "legacy",
+        "multihot",
+        "deepsets",
+        "settransformer"
+      ],
+      "min_seed_count": 5,
+      "allowed_seed_sets": [
+        [
+          42,
+          123,
+          456,
+          789,
+          999
+        ]
+      ],
+      "expected_calibration_methods": [
+        "none",
+        "temperature",
+        "isotonic"
+      ],
+      "evaluation_window_policy": "default_preset",
+      "fold_policy": "default_preset",
+      "data_freshness_policy": "same_fingerprint_family",
+      "description": "Extended 5-seed full-epoch comparison.  Use when signals are borderline or run_more_seeds is flagged."
+    }
+  }
+}

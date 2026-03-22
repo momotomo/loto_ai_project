@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.696115+00:00",
+  "gate_status": "yellow",
+  "candidate_variant": "settransformer",
+  "evidence_window": 2,
+  "comparability_ok": true,
+  "comparability_severity": "warning",
+  "comparability_note": "1 pair(s) checked; all comparable but 1 pair(s) have warnings.  Review warnings before drawing trend conclusions.",
+  "conditions_passed": [
+    "consistent_challenger: 'settransformer' recommended 2 consecutive times",
+    "no_high_regression: regression alert level is 'none'",
+    "enough_seeds: 3 seeds evaluated",
+    "enough_loto_types: 3 loto_types evaluated",
+    "comparability_ok: campaigns are comparable with warnings — 1 pair(s) checked; all comparable but 1 pair(s) have warnings.  Review warnings before drawing trend conclusions."
+  ],
+  "blockers": [
+    "No sustained positive action signal: latest=`hold`, consecutive=2 (need ≥2 for consider_promotion or run_more_seeds)",
+    "No variant passed promotion guardrails (consistent_promote_variants is empty)."
+  ],
+  "rationale": "Gate is YELLOW: Some conditions met (5 passed, 2 blockers). Signal is promising but not yet conclusive.",
+  "next_required_action": "Address blockers above. Consider running archcomp_full for more seeds, or wait for another campaign to confirm the trend."
+}

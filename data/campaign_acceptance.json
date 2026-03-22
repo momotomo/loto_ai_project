@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-22T02:06:53.695199+00:00",
+  "campaign_name": "2026-03-21_archcomp_b",
+  "profile_name": "archcomp",
+  "benchmark_name": "archcomp",
+  "decision_benchmark_name": "archcomp",
+  "accepted_for_decision_use": true,
+  "counts_toward_promotion_readiness": true,
+  "can_count_toward_promotion_readiness": true,
+  "failed_requirements": [],
+  "warnings": [],
+  "rationale": "Campaign `2026-03-21_archcomp_b` meets all decision benchmark policy requirements. Benchmark: `archcomp`. This campaign counts toward promotion readiness."
+}

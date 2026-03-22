@@ -1,0 +1,3 @@
+campaign_name,profile_name,decision_benchmark_name,accepted_for_decision_use,counts_toward_promotion_readiness,generated_at,loto_types,preset,seeds,recommended_next_action,recommended_challenger,keep_production_as_is,best_variant_by_logloss,consistent_promote_variants,blockers_count
+2026-03-21_archcomp_a_retry,archcomp,archcomp,true,true,2026-03-22T01:36:29.966372+00:00,loto6|loto7|miniloto,archcomp,42|123|456,hold,settransformer,true,settransformer,,1
+2026-03-21_archcomp_b,archcomp,archcomp,true,true,2026-03-22T02:06:53.690599+00:00,loto6|loto7|miniloto,archcomp,42|123|456,hold,settransformer,true,settransformer,,1
